@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: rengifo_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rengifo
+      POSTGRES_PASSWORD: rengifo_secret
+      POSTGRES_DB: rengifo_clientes
+    ports:
+      - "5432:5432"
+    volumes:
+      - rengifo_pgdata:/var/lib/postgresql/data
+    shm_size: 128mb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rengifo -d rengifo_clientes"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rengifo_web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://rengifo:rengifo_secret@db:5432/rengifo_clientes
+    ports:
+      - "3005:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  rengifo_pgdata:

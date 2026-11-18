@@ -16,6 +16,8 @@ export function calculateFinancialSummary(clients: Client[]): FinancialSummary {
     profesional: { count: 0, honorarios: new Decimal(0) },
     industrial: { count: 0, honorarios: new Decimal(0) },
     alquiler: { count: 0, honorarios: new Decimal(0) },
+    empresa: { count: 0, honorarios: new Decimal(0) },
+    unipersonal: { count: 0, honorarios: new Decimal(0) },
     otro: { count: 0, honorarios: new Decimal(0) }
   };
 
@@ -61,6 +63,14 @@ export function calculateFinancialSummary(clients: Client[]): FinancialSummary {
         count: porRubro.alquiler.count,
         honorarios: porRubro.alquiler.honorarios.toDecimalPlaces(2).toNumber()
       },
+      empresa: {
+        count: porRubro.empresa.count,
+        honorarios: porRubro.empresa.honorarios.toDecimalPlaces(2).toNumber()
+      },
+      unipersonal: {
+        count: porRubro.unipersonal.count,
+        honorarios: porRubro.unipersonal.honorarios.toDecimalPlaces(2).toNumber()
+      },
       otro: {
         count: porRubro.otro.count,
         honorarios: porRubro.otro.honorarios.toDecimalPlaces(2).toNumber()
@@ -75,4 +85,16 @@ export function formatBs(value: number | string): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
+}
+
+/**
+ * Calculate monthly due date based on the last digit of the Bolivian NIT (DS 25619):
+ * 0 -> Día 13, 1 -> Día 14, ..., 9 -> Día 22.
+ */
+export function getFechaPagoFromNit(nit: string): string {
+  const digits = String(nit || '').replace(/\D/g, '');
+  if (!digits) return '';
+  const lastDigit = Number(digits[digits.length - 1]);
+  if (!Number.isInteger(lastDigit) || lastDigit < 0 || lastDigit > 9) return '';
+  return `Día ${13 + lastDigit} de cada mes`;
 }

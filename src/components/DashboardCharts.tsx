@@ -14,6 +14,8 @@ const RUBRO_META: Array<{ key: Rubro; label: string; color: string }> = [
   { key: 'profesional', label: 'Profesional', color: '#4f46e5' },
   { key: 'industrial', label: 'Industrial', color: '#e87700' },
   { key: 'alquiler', label: 'Alquiler', color: '#0d9488' },
+  { key: 'empresa', label: 'Empresa', color: '#0284c7' },
+  { key: 'unipersonal', label: 'Unipersonal', color: '#db2777' },
   { key: 'otro', label: 'Otro', color: '#7c3aed' }
 ];
 
@@ -100,7 +102,7 @@ export default function DashboardCharts({ clients, summary }: DashboardChartsPro
       {/* Gráfico 1: Distribución por Rubro */}
       <article className="chart-card">
         <header className="chart-header">
-          <h3>Distribución por Rubro</h3>
+          <h3>Distribución por Categoría</h3>
           <span className="chart-total">{totalClients} clientes</span>
         </header>
 

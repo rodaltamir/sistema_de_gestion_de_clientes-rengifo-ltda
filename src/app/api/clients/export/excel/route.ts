@@ -8,6 +8,8 @@ const RUBRO_LABELS: Record<string, string> = {
   profesional: 'Profesional',
   industrial: 'Industrial',
   alquiler: 'Alquiler',
+  empresa: 'Empresa',
+  unipersonal: 'Unipersonal',
   otro: 'Otro'
 };
 
@@ -34,7 +36,10 @@ export async function GET(req: NextRequest) {
     { header: 'Razón Social / Nombre', key: 'razon_social', width: 36 },
     { header: 'NIT', key: 'nit', width: 16 },
     { header: 'Estado', key: 'estado', width: 20 },
-    { header: 'Rubro', key: 'rubro', width: 14 },
+    { header: 'Categoría', key: 'rubro', width: 14 },
+    { header: 'Rubro Específico', key: 'rubro_especifico', width: 20 },
+    { header: 'Carnet de Identidad', key: 'ci_numero', width: 16 },
+    { header: 'Extensión CI', key: 'ci_extension', width: 12 },
     { header: 'Celular', key: 'celular', width: 14 },
     { header: 'Correo Electrónico', key: 'correo', width: 28 },
     { header: 'Dirección', key: 'direccion', width: 34 },

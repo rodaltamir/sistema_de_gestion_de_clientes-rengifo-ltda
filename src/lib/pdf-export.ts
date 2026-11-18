@@ -7,6 +7,8 @@ const RUBRO_LABELS: Record<string, string> = {
   profesional: 'Profesional',
   industrial: 'Industrial',
   alquiler: 'Alquiler',
+  empresa: 'Empresa',
+  unipersonal: 'Unipersonal',
   otro: 'Otro'
 };
 
@@ -110,7 +112,9 @@ export function exportSingleClientPdf(client: Client) {
     ['Razón Social / Nombre', client.razon_social],
     ['NIT', client.nit],
     ['Estado', client.estado],
-    ['Rubro', RUBRO_LABELS[client.rubro] || client.rubro],
+    ['Categoría', RUBRO_LABELS[client.rubro] || client.rubro],
+    ['Rubro específico', client.rubro_especifico || '—'],
+    ['Carnet de Identidad', client.ci_numero ? `${client.ci_numero} ${client.ci_extension}`.trim() : '—'],
     ['Celular', client.celular || '—'],
     ['Correo Electrónico', client.correo || '—'],
     ['Dirección', client.direccion || '—'],

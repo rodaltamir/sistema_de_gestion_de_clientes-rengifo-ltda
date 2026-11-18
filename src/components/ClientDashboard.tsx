@@ -26,12 +26,15 @@ import {
   Plus,
   Search,
   Trash2,
+  Upload,
+  UserCheck,
   Wallet,
   X,
   XCircle
 } from 'lucide-react';
 import DashboardCharts from './DashboardCharts';
-import { calculateFinancialSummary, formatBs } from '@/lib/calculations';
+import { calculateFinancialSummary, formatBs, getFechaPagoFromNit } from '@/lib/calculations';
+import { parseExcelClientsFile } from '@/lib/excel-import';
 import { exportClientsToPdf, exportSingleClientPdf } from '@/lib/pdf-export';
 import type {
   Client,
@@ -48,7 +51,22 @@ const RUBRO_OPTIONS: Array<{ value: Rubro; label: string; icon: React.ReactNode 
   { value: 'profesional', label: 'Profesional', icon: <Briefcase size={16} aria-hidden="true" /> },
   { value: 'industrial', label: 'Industrial', icon: <Factory size={16} aria-hidden="true" /> },
   { value: 'alquiler', label: 'Alquiler', icon: <Building size={16} aria-hidden="true" /> },
+  { value: 'empresa', label: 'Empresa', icon: <Building2 size={16} aria-hidden="true" /> },
+  { value: 'unipersonal', label: 'Unipersonal', icon: <UserCheck size={16} aria-hidden="true" /> },
   { value: 'otro', label: 'Otro', icon: <Layers size={16} aria-hidden="true" /> }
+];
+
+const CI_EXTENSIONS = [
+  { value: 'LP', label: 'LP - La Paz' },
+  { value: 'CB', label: 'CB - Cochabamba' },
+  { value: 'SC', label: 'SC - Santa Cruz' },
+  { value: 'OR', label: 'OR - Oruro' },
+  { value: 'PT', label: 'PT - Potosí' },
+  { value: 'TJ', label: 'TJ - Tarija' },
+  { value: 'CH', label: 'CH - Chuquisaca' },
+  { value: 'BE', label: 'BE - Beni' },
+  { value: 'PD', label: 'PD - Pando' },
+  { value: 'EX', label: 'EX - Extranjero' }
 ];
 
 const ESTADO_OPTIONS: Array<{ value: ClientEstado; label: string; icon: React.ReactNode }> = [
@@ -67,6 +85,8 @@ const RUBRO_LABELS: Record<Rubro, string> = {
   profesional: 'Profesional',
   industrial: 'Industrial',
   alquiler: 'Alquiler',
+  empresa: 'Empresa',
+  unipersonal: 'Unipersonal',
   otro: 'Otro'
 };
 
@@ -94,6 +114,9 @@ const EMPTY_FORM: Omit<Client, 'id'> = {
   contrasena_correo: '',
   contrasena_siat: '',
   rubro: 'profesional',
+  rubro_especifico: '',
+  ci_numero: '',
+  ci_extension: '',
   fecha_pago: '',
   mes_cierre: 'Diciembre',
   honorarios_profesionales: 0,
@@ -204,7 +227,48 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
   const searchInputRef = useRef<HTMLInputElement>(null);
   const detailDialogRef = useRef<HTMLDialogElement>(null);
   const formDialogRef = useRef<HTMLDialogElement>(null);
+  const importDialogRef = useRef<HTMLDialogElement>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Excel Import State
+  const [importTab, setImportTab] = useState<'new' | 'history'>('new');
+  const [importFileName, setImportFileName] = useState('');
+  const [importParsedRows, setImportParsedRows] = useState<Array<Record<string, unknown>>>([]);
+  const [importPreview, setImportPreview] = useState<
+    Array<{
+      rowNumber: number;
+      status: 'new' | 'duplicate_db' | 'duplicate_file' | 'invalid';
+      reason: string;
+      data: Record<string, unknown>;
+    }>
+  >([]);
+  const [importCounts, setImportCounts] = useState({
+    new: 0,
+    duplicate_db: 0,
+    duplicate_file: 0,
+    invalid: 0
+  });
+  const [importDuplicateAction, setImportDuplicateAction] = useState<'skip' | 'update'>('skip');
+  const [importYear, setImportYear] = useState<number>(new Date().getFullYear());
+  const [importMonth, setImportMonth] = useState<number>(new Date().getMonth() + 1);
+  const [importRecordHistory, setImportRecordHistory] = useState(true);
+  const [importBatches, setImportBatches] = useState<
+    Array<{
+      id: number;
+      archivo: string;
+      periodo: string;
+      anio: number;
+      mes: string;
+      fecha_periodo: string;
+      nuevos: number;
+      actualizados: number;
+      total_filas: number;
+      created_at: string;
+    }>
+  >([]);
+  const [importBatchYearFilter, setImportBatchYearFilter] = useState<string>('');
+  const [importLoading, setImportLoading] = useState(false);
+  const [importError, setImportError] = useState('');
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -218,12 +282,38 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
         showToast(`Sin ${label.toLowerCase()} registrado.`);
         return;
       }
-      try {
-        await navigator.clipboard.writeText(text);
-        showToast(`${label} copiado`);
-      } catch {
-        showToast('No se pudo copiar.');
+
+      let ok = false;
+      if (navigator.clipboard && window.isSecureContext) {
+        try {
+          await navigator.clipboard.writeText(text);
+          ok = true;
+        } catch {
+          ok = false;
+        }
       }
+
+      if (!ok) {
+        // Fallback that works on http:// and inside top-layer <dialog showModal()>
+        const container = document.querySelector('dialog[open]') || document.body;
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        ta.style.pointerEvents = 'none';
+        container.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try {
+          ok = document.execCommand('copy');
+        } catch {
+          ok = false;
+        }
+        container.removeChild(ta);
+      }
+
+      showToast(ok ? `${label} copiado` : 'No se pudo copiar.');
     },
     [showToast]
   );
@@ -593,8 +683,179 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
     if (rubro === 'profesional') return 'badge-rubro-prof';
     if (rubro === 'industrial') return 'badge-rubro-ind';
     if (rubro === 'alquiler') return 'badge-rubro-alq';
+    if (rubro === 'empresa') return 'badge-rubro-emp';
+    if (rubro === 'unipersonal') return 'badge-rubro-uni';
     return 'badge-rubro-otro';
   };
+
+  const MONTH_NAMES = [
+    'Enero',
+    'Febrero',
+    'Marzo',
+    'Abril',
+    'Mayo',
+    'Junio',
+    'Julio',
+    'Agosto',
+    'Septiembre',
+    'Octubre',
+    'Noviembre',
+    'Diciembre'
+  ];
+
+  async function loadImportBatches(yearStr = '') {
+    const qs = yearStr ? `?year=${yearStr}` : '';
+    const res = await fetch(`/api/clients/import${qs}`);
+    if (res.ok) {
+      const data = await res.json();
+      setImportBatches(data.batches || []);
+    }
+  }
+
+  function openImportDialog() {
+    setImportTab('new');
+    setImportFileName('');
+    setImportParsedRows([]);
+    setImportPreview([]);
+    setImportCounts({ new: 0, duplicate_db: 0, duplicate_file: 0, invalid: 0 });
+    setImportDuplicateAction('skip');
+    setImportYear(new Date().getFullYear());
+    setImportMonth(new Date().getMonth() + 1);
+    setImportRecordHistory(true);
+    setImportBatchYearFilter('');
+    setImportError('');
+    loadImportBatches();
+    importDialogRef.current?.showModal();
+  }
+
+  async function runImportDryRun(rowsToCheck: Array<Record<string, unknown>>) {
+    if (rowsToCheck.length === 0) {
+      setImportPreview([]);
+      setImportCounts({ new: 0, duplicate_db: 0, duplicate_file: 0, invalid: 0 });
+      return;
+    }
+    const res = await fetch('/api/clients/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: rowsToCheck, dryRun: true })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setImportError(data.error || 'Error al analizar el archivo.');
+      return;
+    }
+    setImportPreview(data.preview || []);
+    setImportCounts(data.counts || { new: 0, duplicate_db: 0, duplicate_file: 0, invalid: 0 });
+  }
+
+  async function handleExcelFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportError('');
+    setImportFileName(file.name);
+    setImportLoading(true);
+    try {
+      const { rows: parsed, detectedYear, detectedMonth } = await parseExcelClientsFile(file);
+      if (parsed.length === 0) {
+        setImportError('No se encontraron filas de clientes en el archivo.');
+        setImportParsedRows([]);
+        setImportPreview([]);
+        return;
+      }
+      if (detectedYear) setImportYear(detectedYear);
+      if (detectedMonth) setImportMonth(detectedMonth);
+      setImportParsedRows(parsed);
+      await runImportDryRun(parsed);
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : 'No se pudo leer el archivo Excel.');
+    } finally {
+      setImportLoading(false);
+    }
+  }
+
+  function handleEditImportField(
+    rowNumber: number,
+    field: string,
+    value: string | number
+  ) {
+    setImportParsedRows((prev) =>
+      prev.map((row) =>
+        Number(row._rowNumber) === rowNumber ? { ...row, [field]: value } : row
+      )
+    );
+    setImportPreview((prev) =>
+      prev.map((item) =>
+        item.rowNumber === rowNumber
+          ? { ...item, data: { ...item.data, [field]: value } }
+          : item
+      )
+    );
+  }
+
+  async function handleRemoveImportRow(rowNumber: number) {
+    const nextRows = importParsedRows.filter(
+      (row) => Number(row._rowNumber) !== rowNumber
+    );
+    setImportParsedRows(nextRows);
+    await runImportDryRun(nextRows);
+  }
+
+  async function handleRevalidateImport() {
+    setImportLoading(true);
+    setImportError('');
+    try {
+      await runImportDryRun(importParsedRows);
+      showToast('Validación de filas actualizada.');
+    } finally {
+      setImportLoading(false);
+    }
+  }
+
+  async function handleConfirmImport() {
+    if (importParsedRows.length === 0) return;
+    setImportLoading(true);
+    setImportError('');
+    const monthStr = String(importMonth).padStart(2, '0');
+    const periodCode = `${importYear}-${monthStr}`;
+    const periodFecha = `${importYear}-${monthStr}-01`;
+    const monthLabel = MONTH_NAMES[importMonth - 1] || '';
+
+    try {
+      const res = await fetch('/api/clients/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rows: importParsedRows,
+          dryRun: false,
+          duplicateAction: importDuplicateAction,
+          period: {
+            year: importYear,
+            monthLabel,
+            periodo: periodCode,
+            fecha: periodFecha,
+            fileName: importFileName,
+            recordHistory: importRecordHistory
+          }
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setImportError(data.error || 'Error al importar clientes.');
+        return;
+      }
+      importDialogRef.current?.close();
+      showToast(
+        `Importación (${monthLabel} ${importYear}): ${data.inserted} nuevos${
+          data.updated ? `, ${data.updated} actualizados` : ''
+        }.`
+      );
+      await fetchClients();
+    } catch {
+      setImportError('Error de conexión al importar.');
+    } finally {
+      setImportLoading(false);
+    }
+  }
 
   const historyEstadoClass = (estado: string) => {
     if (estado === 'Pagado') return 'badge-ok';
@@ -798,6 +1059,10 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                       Limpiar
                     </button>
                   )}
+                  <button type="button" className="btn btn-secondary" onClick={openImportDialog}>
+                    <Upload size={16} aria-hidden="true" />
+                    Importar
+                  </button>
                   <button type="button" className="btn btn-secondary" onClick={handleExportExcel}>
                     <FileSpreadsheet size={16} aria-hidden="true" />
                     Excel
@@ -835,8 +1100,8 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                   ))}
                 </div>
 
-                <div className="chip-group" role="group" aria-label="Filtrar por rubro">
-                  <span className="chip-group-label">Rubro:</span>
+                <div className="chip-group" role="group" aria-label="Filtrar por categoría">
+                  <span className="chip-group-label">Categoría:</span>
                   <button
                     type="button"
                     className={`filter-chip ${filterRubro === '' ? 'is-active' : ''}`}
@@ -1035,7 +1300,7 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                   <th scope="col">Clave SIAT</th>
                   <th scope="col" aria-sort={sortKey === 'rubro' ? sortDir : undefined}>
                     <button type="button" className="sort-btn" onClick={() => toggleSort('rubro')}>
-                      Rubro <span className="sort-icon" aria-hidden="true" />
+                      Categoría <span className="sort-icon" aria-hidden="true" />
                     </button>
                   </th>
                   <th scope="col" aria-sort={sortKey === 'fecha_ingreso' ? sortDir : undefined}>
@@ -1292,6 +1557,26 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
               <section className="detail-card">
                 <h3><Building2 size={14} aria-hidden="true" /> Datos Generales</h3>
                 <dl className="detail-list">
+                  <div className="detail-row">
+                    <dt>Rubro específico</dt>
+                    <dd>{selectedClient.rubro_especifico || '—'}</dd>
+                  </div>
+                  {selectedClient.ci_numero && (
+                    <div className="detail-row">
+                      <dt>Carnet de Identidad</dt>
+                      <dd className="mono-copy">
+                        <span>
+                          {selectedClient.ci_numero}{' '}
+                          {selectedClient.ci_extension}
+                        </span>
+                        <CopyButton
+                          value={`${selectedClient.ci_numero} ${selectedClient.ci_extension}`.trim()}
+                          label="Carnet"
+                          onCopy={copyText}
+                        />
+                      </dd>
+                    </div>
+                  )}
                   <div className="detail-row">
                     <dt>Celular</dt>
                     <dd className="mono-copy">
@@ -1734,14 +2019,25 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                   required
                   placeholder="Ej. 1028475021"
                   value={formState.nit}
-                  onChange={(e) => setFormState({ ...formState, nit: e.target.value })}
+                  onChange={(e) => {
+                    const newNit = e.target.value;
+                    const autoPago = getFechaPagoFromNit(newNit);
+                    const shouldAuto =
+                      !formState.fecha_pago ||
+                      /^Día \d{1,2} de cada mes$/.test(formState.fecha_pago);
+                    setFormState({
+                      ...formState,
+                      nit: newNit,
+                      fecha_pago: shouldAuto && autoPago ? autoPago : formState.fecha_pago
+                    });
+                  }}
                 />
               </div>
 
-              {/* Selector gráfico de Rubro */}
+              {/* Selector gráfico de Categoría */}
               <div className="field span-2">
-                <span className="field-label">Rubro</span>
-                <div className="visual-picker" role="radiogroup" aria-label="Rubro">
+                <span className="field-label">Categoría</span>
+                <div className="visual-picker visual-picker-6" role="radiogroup" aria-label="Categoría">
                   {RUBRO_OPTIONS.map((opt) => (
                     <button
                       key={opt.value}
@@ -1756,6 +2052,63 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {formState.rubro === 'unipersonal' && (
+                <>
+                  <div className="field">
+                    <label htmlFor="cf-ci-num">
+                      Carnet de Identidad <span aria-hidden="true">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      id="cf-ci-num"
+                      inputMode="numeric"
+                      required
+                      pattern="^[0-9]{4,12}(-[A-Za-z0-9]{1,3})?$"
+                      placeholder="Ej. 6849106 o 6849106-1A"
+                      value={formState.ci_numero}
+                      onChange={(e) =>
+                        setFormState({ ...formState, ci_numero: e.target.value.toUpperCase() })
+                      }
+                    />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="cf-ci-ext">
+                      Extensión (Dpto. / País) <span aria-hidden="true">*</span>
+                    </label>
+                    <select
+                      id="cf-ci-ext"
+                      required
+                      value={formState.ci_extension}
+                      onChange={(e) =>
+                        setFormState({ ...formState, ci_extension: e.target.value })
+                      }
+                    >
+                      <option value="">Seleccionar...</option>
+                      {CI_EXTENSIONS.map((ext) => (
+                        <option key={ext.value} value={ext.value}>
+                          {ext.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+
+              <div className="field span-2">
+                <label htmlFor="cf-rubro-esp">
+                  Rubro específico <span className="opt-tag">Opcional</span>
+                </label>
+                <input
+                  type="text"
+                  id="cf-rubro-esp"
+                  placeholder="Ej. Transporte, Salud, Construcción, Comercio..."
+                  value={formState.rubro_especifico}
+                  onChange={(e) =>
+                    setFormState({ ...formState, rubro_especifico: e.target.value })
+                  }
+                />
               </div>
 
               {/* Selector gráfico de Estado */}
@@ -1887,6 +2240,9 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                   value={formState.fecha_pago}
                   onChange={(e) => setFormState({ ...formState, fecha_pago: e.target.value })}
                 />
+                <span className="field-hint">
+                  Se autocompleta según último dígito del NIT (DS 25619).
+                </span>
               </div>
               <div className="field">
                 <label htmlFor="cf-ingreso">Fecha de ingreso</label>
@@ -2036,6 +2392,443 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
             </button>
           </footer>
         </form>
+      </dialog>
+
+      {/* Modal: Importar Excel (.xls / .xlsx) con Previsualización y Discriminación de Duplicados */}
+      <dialog
+        ref={importDialogRef}
+        className="dialog-panel dialog-xl"
+        {...({ closedby: 'any' } as Record<string, string>)}
+        aria-labelledby="import-dialog-title"
+        onClose={(e) => {
+          e.currentTarget.returnValue = '';
+        }}
+      >
+        <div className="dialog-header">
+          <div>
+            <h2 id="import-dialog-title">Importar clientes desde Excel</h2>
+            <p className="dialog-subtitle">
+              Soporta archivos .xls, .xlsx y .csv. Valida los datos y discrimina NITs repetidos antes de guardar.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => importDialogRef.current?.close()}
+            aria-label="Cerrar importador"
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="detail-tabs" role="tablist" aria-label="Opciones de importación">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={importTab === 'new'}
+            className={`detail-tab ${importTab === 'new' ? 'is-active' : ''}`}
+            onClick={() => setImportTab('new')}
+          >
+            <Upload size={14} aria-hidden="true" />
+            Nueva importación
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={importTab === 'history'}
+            className={`detail-tab ${importTab === 'history' ? 'is-active' : ''}`}
+            onClick={() => {
+              setImportTab('history');
+              loadImportBatches(importBatchYearFilter);
+            }}
+          >
+            <History size={14} aria-hidden="true" />
+            Historial de importaciones ({importBatches.length})
+          </button>
+        </div>
+
+        {importTab === 'new' ? (
+          <div className="dialog-body">
+            <div className="import-upload-box">
+              <label htmlFor="excel-file-input" className="btn btn-secondary">
+                <Upload size={16} aria-hidden="true" />
+                {importFileName ? 'Cambiar archivo' : 'Seleccionar archivo (.xls / .xlsx)'}
+              </label>
+              <input
+                id="excel-file-input"
+                type="file"
+                accept=".xls,.xlsx,.csv"
+                className="visually-hidden"
+                onChange={handleExcelFileSelected}
+              />
+              <span className="import-filename">
+                {importFileName || 'Ningún archivo seleccionado'}
+              </span>
+            </div>
+
+            {/* Apartado de tiempo / período de la importación */}
+            <div className="import-period-bar">
+              <div className="import-period-fields">
+                <span className="time-label">
+                  <Calendar size={14} aria-hidden="true" /> Período del archivo:
+                </span>
+                <select
+                  aria-label="Mes de la importación"
+                  value={importMonth}
+                  onChange={(e) => setImportMonth(Number(e.target.value))}
+                >
+                  {MONTH_NAMES.map((m, idx) => (
+                    <option key={m} value={idx + 1}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Año de la importación"
+                  value={importYear}
+                  onChange={(e) => setImportYear(Number(e.target.value))}
+                >
+                  {[2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027, 2028].map((yr) => (
+                    <option key={yr} value={yr}>
+                      {yr}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <label className="import-history-check">
+                <input
+                  type="checkbox"
+                  checked={importRecordHistory}
+                  onChange={(e) => setImportRecordHistory(e.target.checked)}
+                />
+                Registrar en histórico de cada cliente
+              </label>
+            </div>
+
+          {importError && (
+            <div className="form-alert" role="alert">
+              {importError}
+            </div>
+          )}
+
+          {importPreview.length > 0 && (
+            <>
+              <div className="import-summary-bar">
+                <div className="import-summary-pills">
+                  <span className="badge badge-ok">
+                    Nuevos: {importCounts.new}
+                  </span>
+                  <span className="badge badge-warn">
+                    Repetidos en sistema: {importCounts.duplicate_db}
+                  </span>
+                  <span className="badge badge-neutral">
+                    Repetidos en archivo: {importCounts.duplicate_file}
+                  </span>
+                  {importCounts.invalid > 0 && (
+                    <span className="badge badge-danger">
+                      Inválidos: {importCounts.invalid}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={importLoading}
+                  onClick={handleRevalidateImport}
+                >
+                  Revalidar cambios
+                </button>
+              </div>
+
+              {importCounts.duplicate_db > 0 && (
+                <div className="import-dup-policy">
+                  <span>Clientes repetidos ({importCounts.duplicate_db}):</span>
+                  <label>
+                    <input
+                      type="radio"
+                      name="dupPolicy"
+                      checked={importDuplicateAction === 'skip'}
+                      onChange={() => setImportDuplicateAction('skip')}
+                    />
+                    Omitir repetidos (recomendado)
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="dupPolicy"
+                      checked={importDuplicateAction === 'update'}
+                      onChange={() => setImportDuplicateAction('update')}
+                    />
+                    Actualizar datos de existentes
+                  </label>
+                </div>
+              )}
+
+              <div className="import-preview-scroll">
+                <table className="import-preview-table">
+                  <thead>
+                    <tr>
+                      <th>Fila</th>
+                      <th>Estado</th>
+                      <th>Razón Social / Nombre</th>
+                      <th>NIT</th>
+                      <th>Categoría</th>
+                      <th>Correo</th>
+                      <th>Clave SIAT</th>
+                      <th>Clave Correo</th>
+                      <th>Pago</th>
+                      <th>Honorarios</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importPreview.map((item) => (
+                      <tr key={item.rowNumber}>
+                        <td>{item.rowNumber}</td>
+                        <td>
+                          <span
+                            className={`badge ${
+                              item.status === 'new'
+                                ? 'badge-ok'
+                                : item.status === 'duplicate_db'
+                                ? 'badge-warn'
+                                : item.status === 'duplicate_file'
+                                ? 'badge-neutral'
+                                : 'badge-danger'
+                            }`}
+                            title={item.reason}
+                          >
+                            {item.status === 'new'
+                              ? 'Nuevo'
+                              : item.status === 'duplicate_db'
+                              ? 'Repetido'
+                              : item.status === 'duplicate_file'
+                              ? 'Dup. archivo'
+                              : 'Inválido'}
+                          </span>
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            className="import-cell-input import-cell-wide"
+                            aria-label={`Razón Social fila ${item.rowNumber}`}
+                            value={String(item.data.razon_social || '')}
+                            onChange={(e) =>
+                              handleEditImportField(item.rowNumber, 'razon_social', e.target.value)
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            className="import-cell-input import-cell-nit"
+                            aria-label={`NIT fila ${item.rowNumber}`}
+                            value={String(item.data.nit || '')}
+                            onChange={(e) =>
+                              handleEditImportField(item.rowNumber, 'nit', e.target.value)
+                            }
+                          />
+                        </td>
+                        <td>
+                          <select
+                            className="import-cell-input"
+                            aria-label={`Categoría fila ${item.rowNumber}`}
+                            value={String(item.data.rubro || 'otro')}
+                            onChange={(e) =>
+                              handleEditImportField(item.rowNumber, 'rubro', e.target.value)
+                            }
+                          >
+                            <option value="profesional">Profesional</option>
+                            <option value="industrial">Industrial</option>
+                            <option value="alquiler">Alquiler</option>
+                            <option value="empresa">Empresa</option>
+                            <option value="unipersonal">Unipersonal</option>
+                            <option value="otro">Otro</option>
+                          </select>
+                        </td>
+                        <td>
+                          <input
+                            type="email"
+                            className="import-cell-input import-cell-wide"
+                            aria-label={`Correo fila ${item.rowNumber}`}
+                            value={String(item.data.correo || '')}
+                            onChange={(e) =>
+                              handleEditImportField(item.rowNumber, 'correo', e.target.value)
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            className="import-cell-input"
+                            aria-label={`Clave SIAT fila ${item.rowNumber}`}
+                            value={String(item.data.contrasena_siat || '')}
+                            onChange={(e) =>
+                              handleEditImportField(
+                                item.rowNumber,
+                                'contrasena_siat',
+                                e.target.value
+                              )
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            className="import-cell-input"
+                            aria-label={`Clave Correo fila ${item.rowNumber}`}
+                            value={String(item.data.contrasena_correo || '')}
+                            onChange={(e) =>
+                              handleEditImportField(
+                                item.rowNumber,
+                                'contrasena_correo',
+                                e.target.value
+                              )
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            className="import-cell-input"
+                            aria-label={`Fecha de pago fila ${item.rowNumber}`}
+                            value={String(item.data.fecha_pago || '')}
+                            onChange={(e) =>
+                              handleEditImportField(item.rowNumber, 'fecha_pago', e.target.value)
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            className="import-cell-input import-cell-num"
+                            aria-label={`Honorarios fila ${item.rowNumber}`}
+                            value={Number(item.data.honorarios_profesionales || 0)}
+                            onChange={(e) =>
+                              handleEditImportField(
+                                item.rowNumber,
+                                'honorarios_profesionales',
+                                Number(e.target.value)
+                              )
+                            }
+                          />
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn btn-danger-ghost btn-sm"
+                            title="Quitar fila de la importación"
+                            aria-label={`Quitar fila ${item.rowNumber}`}
+                            onClick={() => handleRemoveImportRow(item.rowNumber)}
+                          >
+                            <Trash2 size={14} aria-hidden="true" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+        ) : (
+          <div className="dialog-body">
+            <div className="history-toolbar" style={{ marginBottom: '0.85rem' }}>
+              <div className="import-period-fields">
+                <span className="time-label">
+                  <Calendar size={14} aria-hidden="true" /> Filtrar por año:
+                </span>
+                <select
+                  aria-label="Filtrar historial de importaciones por año"
+                  value={importBatchYearFilter}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setImportBatchYearFilter(val);
+                    loadImportBatches(val);
+                  }}
+                >
+                  <option value="">Todos los años</option>
+                  {[2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027].map((yr) => (
+                    <option key={yr} value={String(yr)}>
+                      {yr}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {importBatches.length === 0 ? (
+              <p className="history-empty">Aún no hay importaciones registradas para este filtro.</p>
+            ) : (
+              <div className="import-preview-scroll">
+                <table className="import-preview-table">
+                  <thead>
+                    <tr>
+                      <th>Período</th>
+                      <th>Año</th>
+                      <th>Archivo</th>
+                      <th>Nuevos</th>
+                      <th>Actualizados</th>
+                      <th>Total filas</th>
+                      <th>Fecha de carga</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importBatches.map((b) => (
+                      <tr key={b.id}>
+                        <td>
+                          <span className="badge badge-orange">
+                            {b.mes ? `${b.mes} ${b.anio}` : b.periodo}
+                          </span>
+                        </td>
+                        <td>{b.anio}</td>
+                        <td>{b.archivo}</td>
+                        <td><span className="badge badge-ok">{b.nuevos}</span></td>
+                        <td><span className="badge badge-neutral">{b.actualizados}</span></td>
+                        <td>{b.total_filas}</td>
+                        <td className="mono-copy">
+                          {new Date(b.created_at).toLocaleDateString('es-BO')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        <footer className="dialog-footer dialog-footer-split">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => importDialogRef.current?.close()}
+          >
+            {importTab === 'history' ? 'Cerrar' : 'Cancelar'}
+          </button>
+          {importTab === 'new' && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={
+                importLoading ||
+                importPreview.length === 0 ||
+                (importCounts.new === 0 &&
+                  !(importDuplicateAction === 'update' && importCounts.duplicate_db > 0) &&
+                  !(importRecordHistory && importCounts.duplicate_db > 0))
+              }
+              onClick={handleConfirmImport}
+            >
+              {importLoading
+                ? 'Procesando...'
+                : `Confirmar importación (${MONTH_NAMES[importMonth - 1]} ${importYear})`}
+            </button>
+          )}
+        </footer>
       </dialog>
 
       {toast && (

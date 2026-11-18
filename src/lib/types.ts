@@ -1,4 +1,10 @@
-export type Rubro = 'profesional' | 'industrial' | 'alquiler' | 'otro';
+export type Rubro =
+  | 'profesional'
+  | 'industrial'
+  | 'alquiler'
+  | 'empresa'
+  | 'unipersonal'
+  | 'otro';
 export type ClientEstado = 'Activo' | 'Inactivo / Suspendido' | 'Baja';
 
 export interface User {
@@ -20,6 +26,9 @@ export interface Client {
   contrasena_correo: string;
   contrasena_siat: string;
   rubro: Rubro;
+  rubro_especifico: string;
+  ci_numero: string;
+  ci_extension: string;
   fecha_pago: string;
   mes_cierre: string;
   honorarios_profesionales: number;

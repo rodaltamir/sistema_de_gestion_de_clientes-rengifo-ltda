@@ -93,6 +93,9 @@ export async function ensureDatabaseReady(): Promise<void> {
           contrasena_correo TEXT NOT NULL DEFAULT '',
           contrasena_siat TEXT NOT NULL DEFAULT '',
           rubro TEXT NOT NULL DEFAULT 'otro',
+          rubro_especifico TEXT NOT NULL DEFAULT '',
+          ci_numero TEXT NOT NULL DEFAULT '',
+          ci_extension TEXT NOT NULL DEFAULT '',
           fecha_pago TEXT NOT NULL DEFAULT '',
           mes_cierre TEXT NOT NULL DEFAULT 'Diciembre',
           honorarios_profesionales NUMERIC(14, 2) NOT NULL DEFAULT 0,
@@ -110,7 +113,9 @@ export async function ensureDatabaseReady(): Promise<void> {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           CONSTRAINT chk_clients_razon_nonempty CHECK (length(btrim(razon_social)) > 0),
           CONSTRAINT chk_clients_nit_nonempty CHECK (length(btrim(nit)) > 0),
-          CONSTRAINT chk_clients_rubro_valid CHECK (rubro IN ('profesional', 'industrial', 'alquiler', 'otro')),
+          CONSTRAINT chk_clients_rubro_valid CHECK (rubro IN ('profesional', 'industrial', 'alquiler', 'empresa', 'unipersonal', 'otro')),
+          CONSTRAINT chk_clients_ci_ext_valid CHECK (ci_extension IN ('', 'LP', 'CB', 'SC', 'OR', 'PT', 'TJ', 'CH', 'BE', 'PD', 'EX')),
+          CONSTRAINT chk_clients_ci_num_valid CHECK (ci_numero = '' OR ci_numero ~ '^[0-9]{4,12}(-[A-Za-z0-9]{1,3})?$'),
           CONSTRAINT chk_clients_estado_valid CHECK (estado IN ('Activo', 'Inactivo / Suspendido', 'Baja')),
           CONSTRAINT chk_clients_honorarios_nonneg CHECK (honorarios_profesionales >= 0)
         );
@@ -139,6 +144,21 @@ export async function ensureDatabaseReady(): Promise<void> {
 
         CREATE INDEX IF NOT EXISTS idx_client_records_client ON client_records(client_id);
         CREATE INDEX IF NOT EXISTS idx_client_records_fecha ON client_records(fecha_registro);
+
+        CREATE TABLE IF NOT EXISTS import_batches (
+          id SERIAL PRIMARY KEY,
+          archivo TEXT NOT NULL DEFAULT '',
+          periodo TEXT NOT NULL DEFAULT '',
+          anio INTEGER NOT NULL,
+          mes TEXT NOT NULL DEFAULT '',
+          fecha_periodo TEXT NOT NULL DEFAULT '',
+          nuevos INTEGER NOT NULL DEFAULT 0,
+          actualizados INTEGER NOT NULL DEFAULT 0,
+          total_filas INTEGER NOT NULL DEFAULT 0,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_import_batches_anio ON import_batches(anio);
       `);
 
       // Ensure constraints and role column exist on upgraded databases
@@ -158,8 +178,35 @@ export async function ensureDatabaseReady(): Promise<void> {
           IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_clients_nit_nonempty') THEN
             ALTER TABLE clients ADD CONSTRAINT chk_clients_nit_nonempty CHECK (length(btrim(nit)) > 0);
           END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_clients_rubro_valid') THEN
-            ALTER TABLE clients ADD CONSTRAINT chk_clients_rubro_valid CHECK (rubro IN ('profesional', 'industrial', 'alquiler', 'otro'));
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'clients' AND column_name = 'rubro_especifico'
+          ) THEN
+            ALTER TABLE clients ADD COLUMN rubro_especifico TEXT NOT NULL DEFAULT '';
+          END IF;
+
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'clients' AND column_name = 'ci_numero'
+          ) THEN
+            ALTER TABLE clients ADD COLUMN ci_numero TEXT NOT NULL DEFAULT '';
+          END IF;
+
+          IF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'clients' AND column_name = 'ci_extension'
+          ) THEN
+            ALTER TABLE clients ADD COLUMN ci_extension TEXT NOT NULL DEFAULT '';
+          END IF;
+
+          ALTER TABLE clients DROP CONSTRAINT IF EXISTS chk_clients_rubro_valid;
+          ALTER TABLE clients ADD CONSTRAINT chk_clients_rubro_valid CHECK (rubro IN ('profesional', 'industrial', 'alquiler', 'empresa', 'unipersonal', 'otro'));
+
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_clients_ci_ext_valid') THEN
+            ALTER TABLE clients ADD CONSTRAINT chk_clients_ci_ext_valid CHECK (ci_extension IN ('', 'LP', 'CB', 'SC', 'OR', 'PT', 'TJ', 'CH', 'BE', 'PD', 'EX'));
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_clients_ci_num_valid') THEN
+            ALTER TABLE clients ADD CONSTRAINT chk_clients_ci_num_valid CHECK (ci_numero = '' OR ci_numero ~ '^[0-9]{4,12}(-[A-Za-z0-9]{1,3})?$');
           END IF;
           IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_clients_estado_valid') THEN
             ALTER TABLE clients ADD CONSTRAINT chk_clients_estado_valid CHECK (estado IN ('Activo', 'Inactivo / Suspendido', 'Baja'));

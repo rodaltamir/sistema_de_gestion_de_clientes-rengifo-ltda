@@ -26,6 +26,17 @@ const VALID_CI_EXTENSIONS = new Set([
   'EX'
 ]);
 
+function parseFechaPagoInt(value: unknown, nit: string): number | null {
+  if (value !== '' && value !== null && value !== undefined) {
+    const digits = String(value).replace(/[^0-9]/g, '');
+    if (digits) {
+      const n = Number(digits);
+      if (Number.isInteger(n) && n >= 1 && n <= 31) return n;
+    }
+  }
+  return getFechaPagoFromNit(nit);
+}
+
 function parseMoney(value: unknown): number {
   if (value === '' || value === null || value === undefined) return 0;
   try {
@@ -52,7 +63,10 @@ function mapClientRow(row: Record<string, unknown>): Client {
     rubro_especifico: String(row.rubro_especifico || ''),
     ci_numero: String(row.ci_numero || ''),
     ci_extension: String(row.ci_extension || ''),
-    fecha_pago: String(row.fecha_pago || ''),
+    fecha_pago:
+      row.fecha_pago !== null && row.fecha_pago !== undefined && row.fecha_pago !== ''
+        ? Number(row.fecha_pago)
+        : null,
     mes_cierre: String(row.mes_cierre || 'Diciembre'),
     honorarios_profesionales: Number(row.honorarios_profesionales || 0),
     declaraciones_juradas: String(row.declaraciones_juradas || 'Al día'),
@@ -63,6 +77,10 @@ function mapClientRow(row: Record<string, unknown>): Client {
     celular: String(row.celular || ''),
     estado: (row.estado as ClientEstado) || 'Activo',
     notas: String(row.notas || ''),
+    token_id: row.token_id ? Number(row.token_id) : null,
+    vigencia_token: row.vigencia_token ? String(row.vigencia_token) : null,
+    vigencia_firma: row.vigencia_firma ? String(row.vigencia_firma) : null,
+    modalidad_facturacion: row.modalidad_facturacion ? String(row.modalidad_facturacion) : null,
     created_at: row.created_at ? String(row.created_at) : undefined,
     updated_at: row.updated_at ? String(row.updated_at) : undefined
   };
@@ -122,7 +140,7 @@ export function normalizeClientPayload(raw: Record<string, unknown>) {
     }
   }
 
-  const fecha_pago = String(raw.fecha_pago || '').trim() || getFechaPagoFromNit(nit);
+  const fecha_pago = parseFechaPagoInt(raw.fecha_pago, nit);
 
   let estado = String(raw.estado || '').trim() as ClientEstado;
   if (!VALID_ESTADOS.has(estado)) {
@@ -237,7 +255,24 @@ export async function listClients(filters: Record<string, string> = {}): Promise
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  const sql = `SELECT * FROM clients ${whereClause} ORDER BY LOWER(razon_social) ASC`;
+  const sql = `
+    SELECT clients.*, t.token_id, t.vigencia_token, t.vigencia_firma, t.modalidad_facturacion
+    FROM clients
+    LEFT JOIN LATERAL (
+      SELECT
+        ct.id AS token_id,
+        ct.vigencia_token,
+        ct.vigencia_firma,
+        ct.modalidad_asignada AS modalidad_facturacion
+      FROM client_tokens ct
+      WHERE ct.client_id = clients.id
+         OR LOWER(btrim(ct.nombre_cliente)) = LOWER(btrim(clients.razon_social))
+      ORDER BY (ct.client_id = clients.id) DESC, ct.id ASC
+      LIMIT 1
+    ) t ON TRUE
+    ${whereClause}
+    ORDER BY LOWER(clients.razon_social) ASC
+  `;
   const { rows } = await pool.query(sql, params);
   return rows.map(mapClientRow);
 }
@@ -525,13 +560,19 @@ export async function analyzeAndImportClients(
     seenFileNits.add(nit);
 
     const existing = existingByNit.get(nit);
+    const rawRubro = String(raw.rubro ?? '').trim();
+    const previewData =
+      options.dryRun && rawRubro === ''
+        ? { ...normalized.data, rubro: '' }
+        : normalized.data;
+
     if (existing) {
       counts.duplicate_db += 1;
       preview.push({
         rowNumber,
         status: 'duplicate_db',
         reason: `Ya registrado (${existing.razon_social})`,
-        data: { ...normalized.data, _existingId: existing.id }
+        data: { ...previewData, _existingId: existing.id }
       });
       continue;
     }
@@ -541,7 +582,7 @@ export async function analyzeAndImportClients(
       rowNumber,
       status: 'new',
       reason: 'Listo para importar',
-      data: normalized.data
+      data: previewData
     });
   }
 
@@ -637,7 +678,7 @@ export async function analyzeAndImportClients(
               Number(d.honorarios_profesionales || 0),
               Number(d.saldo_iva || 0),
               Number(d.saldo_it || 0),
-              String(d.fecha_pago || ''),
+              d.fecha_pago ? `Día ${d.fecha_pago}` : '',
               `Importado (${periodMonthLabel ? `${periodMonthLabel} ` : ''}${periodYear}) · ${fileName}`
             ]
           );
@@ -670,4 +711,109 @@ export async function analyzeAndImportClients(
   }
 
   return { dryRun: false, inserted, updated, counts };
+}
+
+export async function bulkClientsAction(
+  ids: number[],
+  action: 'delete' | 'update_estado' | 'update_rubro',
+  value?: string
+) {
+  await ensureDatabaseReady();
+  const cleanIds = ids.filter((n) => Number.isInteger(n) && n > 0);
+  if (cleanIds.length === 0) {
+    return { error: 'No se seleccionaron clientes válidos.', status: 400 as const };
+  }
+
+  const pool = getPool();
+
+  if (action === 'delete') {
+    const res = await pool.query(
+      'DELETE FROM clients WHERE id = ANY($1::int[])',
+      [cleanIds]
+    );
+    return { affected: res.rowCount || 0 };
+  }
+
+  if (action === 'update_estado') {
+    const estado = String(value || '') as ClientEstado;
+    if (!VALID_ESTADOS.has(estado)) {
+      return { error: 'Estado inválido.', status: 400 as const };
+    }
+    const res = await pool.query(
+      'UPDATE clients SET estado = $1, updated_at = NOW() WHERE id = ANY($2::int[])',
+      [estado, cleanIds]
+    );
+    return { affected: res.rowCount || 0 };
+  }
+
+  if (action === 'update_rubro') {
+    const rubro = String(value || '').toLowerCase() as Rubro;
+    if (!VALID_RUBROS.has(rubro)) {
+      return { error: 'Categoría inválida.', status: 400 as const };
+    }
+    const res = await pool.query(
+      'UPDATE clients SET rubro = $1, updated_at = NOW() WHERE id = ANY($2::int[])',
+      [rubro, cleanIds]
+    );
+    return { affected: res.rowCount || 0 };
+  }
+
+  return { error: 'Acción no soportada.', status: 400 as const };
+}
+
+export async function listAllHistory(filters: {
+  q?: string;
+  from?: string;
+  to?: string;
+  estado?: string;
+} = {}) {
+  await ensureDatabaseReady();
+  const pool = getPool();
+  const conds: string[] = [];
+  const params: unknown[] = [];
+
+  if (filters.q?.trim()) {
+    params.push(`%${filters.q.trim()}%`);
+    const p = `$${params.length}`;
+    conds.push(`(c.razon_social ILIKE ${p} OR c.nit ILIKE ${p} OR r.formularios ILIKE ${p})`);
+  }
+  if (filters.from?.trim()) {
+    params.push(filters.from.trim());
+    conds.push(`r.fecha_registro >= $${params.length}`);
+  }
+  if (filters.to?.trim()) {
+    params.push(filters.to.trim());
+    conds.push(`r.fecha_registro <= $${params.length}`);
+  }
+  if (filters.estado?.trim()) {
+    params.push(filters.estado.trim());
+    conds.push(`r.estado_pago = $${params.length}`);
+  }
+
+  const where = conds.length > 0 ? `WHERE ${conds.join(' AND ')}` : '';
+  const { rows } = await pool.query(
+    `SELECT r.*, c.razon_social, c.nit
+     FROM client_records r
+     JOIN clients c ON c.id = r.client_id
+     ${where}
+     ORDER BY r.fecha_registro DESC, r.id DESC
+     LIMIT 300`,
+    params
+  );
+
+  return rows.map((r) => ({
+    id: Number(r.id),
+    client_id: Number(r.client_id),
+    razon_social: String(r.razon_social || ''),
+    nit: String(r.nit || ''),
+    periodo: String(r.periodo || ''),
+    fecha_registro: String(r.fecha_registro || ''),
+    tipo_evento: String(r.tipo_evento || ''),
+    estado_pago: String(r.estado_pago || 'Pagado'),
+    monto_honorarios: Number(r.monto_honorarios || 0),
+    saldo_iva: Number(r.saldo_iva || 0),
+    saldo_it: Number(r.saldo_it || 0),
+    formularios: String(r.formularios || ''),
+    observaciones: String(r.observaciones || '')
+  }));
 }

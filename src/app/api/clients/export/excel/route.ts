@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
     { header: 'Fecha Ingreso', key: 'fecha_ingreso', width: 14 },
     { header: 'Fecha Inactivación', key: 'fecha_inactivacion', width: 16 },
     { header: 'Fecha Baja', key: 'fecha_baja', width: 14 },
-    { header: 'Fecha de Pago', key: 'fecha_pago', width: 20 },
+    { header: 'Día de Pago', key: 'fecha_pago', width: 14 },
     { header: 'Mes de Cierre', key: 'mes_cierre', width: 14 },
     { header: 'Honorarios (Bs.)', key: 'honorarios_profesionales', width: 18 },
     { header: 'Declaraciones Juradas', key: 'declaraciones_juradas', width: 20 },

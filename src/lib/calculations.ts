@@ -88,13 +88,13 @@ export function formatBs(value: number | string): string {
 }
 
 /**
- * Calculate monthly due date based on the last digit of the Bolivian NIT (DS 25619):
- * 0 -> Día 13, 1 -> Día 14, ..., 9 -> Día 22.
+ * Calculate monthly due day (integer 13..22) based on the last digit of the Bolivian NIT (DS 25619):
+ * 0 -> 13, 1 -> 14, ..., 9 -> 22.
  */
-export function getFechaPagoFromNit(nit: string): string {
+export function getFechaPagoFromNit(nit: string): number | null {
   const digits = String(nit || '').replace(/\D/g, '');
-  if (!digits) return '';
+  if (!digits) return null;
   const lastDigit = Number(digits[digits.length - 1]);
-  if (!Number.isInteger(lastDigit) || lastDigit < 0 || lastDigit > 9) return '';
-  return `Día ${13 + lastDigit} de cada mes`;
+  if (!Number.isInteger(lastDigit) || lastDigit < 0 || lastDigit > 9) return null;
+  return 13 + lastDigit;
 }

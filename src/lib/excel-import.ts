@@ -22,15 +22,16 @@ function inferCategoryFromName(name: string): Rubro {
   return 'otro';
 }
 
-function parseCategory(raw: unknown, fallbackName: string): Rubro {
+function parseCategory(raw: unknown): Rubro | '' {
   const norm = normalizeHeader(raw);
+  if (!norm) return '';
   if (norm.includes('prof')) return 'profesional';
   if (norm.includes('ind')) return 'industrial';
   if (norm.includes('alq')) return 'alquiler';
   if (norm.includes('unip')) return 'unipersonal';
   if (norm.includes('emp')) return 'empresa';
   if (norm.includes('otr')) return 'otro';
-  return inferCategoryFromName(fallbackName);
+  return '';
 }
 
 const MONTHS_ES: Record<string, number> = {
@@ -99,7 +100,12 @@ export async function parseExcelClientsFile(file: File): Promise<ParsedExcelResu
     );
   }
 
-  const headers = (matrix[headerRowIdx] || []).map(normalizeHeader);
+  const rawHeaders = matrix[headerRowIdx] || [];
+  const prevHeaders = headerRowIdx > 0 ? matrix[headerRowIdx - 1] || [] : [];
+  const headers = rawHeaders.map((cell, idx) => {
+    const cur = normalizeHeader(cell);
+    return cur || normalizeHeader(prevHeaders[idx]);
+  });
 
   const findCol = (matcher: (h: string) => boolean) =>
     headers.findIndex((h) => h && matcher(h));
@@ -109,12 +115,17 @@ export async function parseExcelClientsFile(file: File): Promise<ParsedExcelResu
   );
   const colNit = findCol((h) => h.includes('nit'));
   const colFechaPago = findCol((h) => h.includes('fecha') && h.includes('pago'));
-  const colCorreo = findCol((h) => h.includes('correo') || h.includes('electtr') || h.includes('email'));
-  const colPassSiat = findCol((h) => h.includes('siat'));
-  const colPassCorreo = findCol(
-    (h) => (h.includes('contrasena') || h.includes('clave')) && !h.includes('siat')
+  const colCorreo = findCol(
+    (h) => (h.includes('correo') || h.includes('electtr') || h.includes('email')) && !h.includes('contrasena') && !h.includes('clave')
   );
-  let colHonorarios = findCol((h) => h.includes('honorario') || h.includes('monto'));
+  const colPassSiat = findCol(
+    (h) => h.includes('siat') && !h.includes('carnet') && !h.includes('usuario')
+  );
+  // Specifically match "CONTRASEÑA CORREO" (ignoring the blue "CONTRASEÑA" column)
+  const colPassCorreo = findCol(
+    (h) => (h.includes('contrasena') || h.includes('clave')) && h.includes('correo')
+  );
+  let colHonorarios = findCol((h) => h.includes('honorario') || h.includes('monto') || h.includes('cuota'));
   const colRubro = findCol((h) => h.includes('categoria') || h === 'rubro');
   const colRubroEsp = findCol((h) => h.includes('rubro especifico') || h.includes('actividad'));
   const colEstado = findCol((h) => h.includes('estado'));
@@ -123,11 +134,18 @@ export async function parseExcelClientsFile(file: File): Promise<ParsedExcelResu
   const colMesCierre = findCol((h) => h.includes('cierre'));
   const colFechaIngreso = findCol((h) => h.includes('ingreso'));
 
-  // In the legacy .xls format, the honorarios column right after CONTRASEÑA CORREO has an empty header
+  // Fallback: if HONORARIOS header wasn't matched (e.g. merged/blank), pick the numeric column right after CONTRASEÑA CORREO
   if (colHonorarios === -1 && colPassCorreo !== -1) {
-    const nextIdx = colPassCorreo + 1;
-    if (!headers[nextIdx]) {
-      colHonorarios = nextIdx;
+    for (let offset = 1; offset <= 2; offset++) {
+      const candidateIdx = colPassCorreo + offset;
+      for (let sr = headerRowIdx + 1; sr < Math.min(matrix.length, headerRowIdx + 6); sr++) {
+        const sampleVal = String((matrix[sr] || [])[candidateIdx] ?? '').trim();
+        if (sampleVal !== '' && /^\d+([.,]\d+)?$/.test(sampleVal.replace(/,/g, ''))) {
+          colHonorarios = candidateIdx;
+          break;
+        }
+      }
+      if (colHonorarios !== -1) break;
     }
   }
 
@@ -157,17 +175,24 @@ export async function parseExcelClientsFile(file: File): Promise<ParsedExcelResu
     if (!razon && !nit) continue;
 
     const rawPago = colFechaPago !== -1 ? String(row[colFechaPago] ?? '').trim() : '';
-    const fechaPago = /^\d{1,2}$/.test(rawPago)
-      ? `Día ${rawPago} de cada mes`
-      : rawPago || getFechaPagoFromNit(nit);
+    const pagoDigits = rawPago.replace(/[^0-9]/g, '');
+    const fechaPagoNum = pagoDigits ? Number(pagoDigits) : null;
+    const fechaPago =
+      fechaPagoNum && fechaPagoNum >= 1 && fechaPagoNum <= 31
+        ? fechaPagoNum
+        : getFechaPagoFromNit(nit);
 
     const rawHonorarios = colHonorarios !== -1 ? row[colHonorarios] : 0;
-    const honorarios = Number(String(rawHonorarios ?? '0').replace(/[^0-9.-]/g, '')) || 0;
+    const honorarios =
+      typeof rawHonorarios === 'number'
+        ? rawHonorarios
+        : Number(String(rawHonorarios ?? '0').replace(/[^0-9.-]/g, '')) || 0;
 
     const rawEstado = colEstado !== -1 ? normalizeHeader(row[colEstado]) : '';
     let estado: 'Activo' | 'Inactivo / Suspendido' | 'Baja' = 'Activo';
-    if (rawEstado.includes('baja')) estado = 'Baja';
-    else if (rawEstado.includes('inact') || rawEstado.includes('susp') || rawEstado === 'i') {
+    if (rawEstado.includes('baja')) {
+      estado = 'Baja';
+    } else if (rawEstado.includes('inact') || rawEstado.includes('susp')) {
       estado = 'Inactivo / Suspendido';
     }
 
@@ -180,9 +205,10 @@ export async function parseExcelClientsFile(file: File): Promise<ParsedExcelResu
       contrasena_siat: colPassSiat !== -1 ? String(row[colPassSiat] ?? '').trim() : '',
       contrasena_correo: colPassCorreo !== -1 ? String(row[colPassCorreo] ?? '').trim() : '',
       honorarios_profesionales: honorarios,
-      rubro: colRubro !== -1 ? parseCategory(row[colRubro], razon) : inferCategoryFromName(razon),
+      rubro: colRubro !== -1 ? parseCategory(row[colRubro]) : '',
       rubro_especifico: colRubroEsp !== -1 ? String(row[colRubroEsp] ?? '').trim() : '',
       estado,
+      declaraciones_juradas: 'Al día',
       celular: colCelular !== -1 ? String(row[colCelular] ?? '').trim() : '',
       direccion: colDireccion !== -1 ? String(row[colDireccion] ?? '').trim() : '',
       mes_cierre: colMesCierre !== -1 && row[colMesCierre] ? String(row[colMesCierre]).trim() : 'Diciembre',

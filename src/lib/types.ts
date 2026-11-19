@@ -29,7 +29,7 @@ export interface Client {
   rubro_especifico: string;
   ci_numero: string;
   ci_extension: string;
-  fecha_pago: string;
+  fecha_pago: number | null;
   mes_cierre: string;
   honorarios_profesionales: number;
   declaraciones_juradas: string;
@@ -40,6 +40,30 @@ export interface Client {
   celular: string;
   estado: ClientEstado;
   notas: string;
+  token_id?: number | null;
+  vigencia_token?: string | null;
+  vigencia_firma?: string | null;
+  modalidad_facturacion?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ClientToken {
+  id: number;
+  client_id: number | null;
+  client_nit?: string | null;
+  client_estado?: string | null;
+  nombre_cliente: string;
+  modalidad_asignada: string;
+  grupo: string;
+  fecha_adecuacion: string;
+  vigencia_token: string;
+  vigencia_firma: string;
+  correo_electronico: string;
+  clave_correo?: string;
+  contrasena_outlook: string;
+  contrasena_gmail: string;
+  contrasena_digicert: string;
   created_at?: string;
   updated_at?: string;
 }

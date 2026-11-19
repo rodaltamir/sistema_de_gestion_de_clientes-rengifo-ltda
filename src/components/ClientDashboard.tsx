@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   BarChart3,
   Briefcase,
   Building,
@@ -11,6 +12,8 @@ import {
   CheckCircle2,
   Clock,
   Copy,
+  Download,
+  ExternalLink,
   Eye,
   EyeOff,
   Factory,
@@ -20,21 +23,29 @@ import {
   History,
   KeyRound,
   Layers,
+  LayoutDashboard,
   LogOut,
+  Maximize2,
+  Minimize2,
   PauseCircle,
   Pencil,
   Plus,
   Search,
+  ShieldCheck,
   Trash2,
   Upload,
   UserCheck,
+  Users,
   Wallet,
   X,
   XCircle
 } from 'lucide-react';
 import DashboardCharts from './DashboardCharts';
+import DashboardInsights from './DashboardInsights';
+import TokenModule from './TokenModule';
 import { calculateFinancialSummary, formatBs, getFechaPagoFromNit } from '@/lib/calculations';
 import { parseExcelClientsFile } from '@/lib/excel-import';
+import { getTokenExpiryStatus } from '@/lib/token-excel-import';
 import { exportClientsToPdf, exportSingleClientPdf } from '@/lib/pdf-export';
 import type {
   Client,
@@ -117,7 +128,7 @@ const EMPTY_FORM: Omit<Client, 'id'> = {
   rubro_especifico: '',
   ci_numero: '',
   ci_extension: '',
-  fecha_pago: '',
+  fecha_pago: null,
   mes_cierre: 'Diciembre',
   honorarios_profesionales: 0,
   declaraciones_juradas: 'Al día',
@@ -188,9 +199,26 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
   const [timePreset, setTimePreset] = useState<'all' | 'month' | 'quarter' | 'year'>('all');
-  const [showCharts, setShowCharts] = useState(true);
+  const [activeModule, setActiveModule] = useState<'control' | 'clientes' | 'tokens' | 'historial'>('control');
+  const [tokenSearchQuery, setTokenSearchQuery] = useState('');
+  const [globalHistoryTab, setGlobalHistoryTab] = useState<'pagos' | 'importaciones'>('pagos');
+  const [globalHistoryRecords, setGlobalHistoryRecords] = useState<
+    Array<
+      ClientHistoryRecord & {
+        razon_social: string;
+        nit: string;
+      }
+    >
+  >([]);
+  const [globalHistoryQ, setGlobalHistoryQ] = useState('');
+  const [globalHistoryFrom, setGlobalHistoryFrom] = useState('');
+  const [globalHistoryTo, setGlobalHistoryTo] = useState('');
+  const [globalHistoryLoading, setGlobalHistoryLoading] = useState(false);
+
+  const [showCharts] = useState(true);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [revealedSecrets, setRevealedSecrets] = useState<Record<string, boolean>>({});
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
   // Sorting
   const [sortKey, setSortKey] = useState<SortKey>('razon_social');
@@ -228,7 +256,49 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
   const detailDialogRef = useRef<HTMLDialogElement>(null);
   const formDialogRef = useRef<HTMLDialogElement>(null);
   const importDialogRef = useRef<HTMLDialogElement>(null);
+  const siatDialogRef = useRef<HTMLDialogElement>(null);
+  const [siatExtReady, setSiatExtReady] = useState(false);
+  const [pendingSiatClient, setPendingSiatClient] = useState<Client | null>(null);
+  const [siatBrowserTab, setSiatBrowserTab] = useState<'chrome' | 'brave' | 'firefox'>('chrome');
+
+  useEffect(() => {
+    const checkExt = () => {
+      if (document.documentElement.dataset.rengifoSiatExt === '1') {
+        setSiatExtReady(true);
+      }
+    };
+    checkExt();
+    window.postMessage({ type: 'RENGIFO_PING_EXT' }, window.location.origin);
+
+    const onMsg = (event: MessageEvent) => {
+      if (event.source === window && event.data?.type === 'RENGIFO_SIAT_READY') {
+        setSiatExtReady(true);
+      }
+    };
+    window.addEventListener('message', onMsg);
+    const timer = setTimeout(checkExt, 400);
+    return () => {
+      window.removeEventListener('message', onMsg);
+      clearTimeout(timer);
+    };
+  }, []);
+  const confirmDialogRef = useRef<HTMLDialogElement>(null);
+  const notifyDialogRef = useRef<HTMLDialogElement>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Popups State (Confirmación y Notificación de Verificación)
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    variant?: 'primary' | 'danger';
+    onConfirm: () => void;
+  } | null>(null);
+  const [notifyState, setNotifyState] = useState<{
+    type: 'success' | 'warning' | 'error';
+    title: string;
+    message: string;
+  } | null>(null);
 
   // Excel Import State
   const [importTab, setImportTab] = useState<'new' | 'history'>('new');
@@ -251,6 +321,9 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
   const [importDuplicateAction, setImportDuplicateAction] = useState<'skip' | 'update'>('skip');
   const [importYear, setImportYear] = useState<number>(new Date().getFullYear());
   const [importMonth, setImportMonth] = useState<number>(new Date().getMonth() + 1);
+  const [importFechaManual, setImportFechaManual] = useState<string>(
+    new Date().toISOString().slice(0, 10)
+  );
   const [importRecordHistory, setImportRecordHistory] = useState(true);
   const [importBatches, setImportBatches] = useState<
     Array<{
@@ -267,6 +340,7 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
     }>
   >([]);
   const [importBatchYearFilter, setImportBatchYearFilter] = useState<string>('');
+  const [importExpanded, setImportExpanded] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [importError, setImportError] = useState('');
 
@@ -275,6 +349,104 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = setTimeout(() => setToast(''), 2200);
   }, []);
+
+  const showNotifyPopup = useCallback(
+    (type: 'success' | 'warning' | 'error', title: string, message: string) => {
+      setNotifyState({ type, title, message });
+    },
+    []
+  );
+
+  const askConfirmPopup = useCallback(
+    (opts: {
+      title: string;
+      message: string;
+      confirmLabel: string;
+      variant?: 'primary' | 'danger';
+      onConfirm: () => void;
+    }) => {
+      setConfirmState(opts);
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (confirmState && confirmDialogRef.current && !confirmDialogRef.current.open) {
+      confirmDialogRef.current.showModal();
+    }
+  }, [confirmState]);
+
+  useEffect(() => {
+    if (notifyState && notifyDialogRef.current && !notifyDialogRef.current.open) {
+      notifyDialogRef.current.showModal();
+    }
+  }, [notifyState]);
+
+  const loadGlobalHistory = useCallback(async () => {
+    setGlobalHistoryLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (globalHistoryQ.trim()) params.set('q', globalHistoryQ.trim());
+      if (globalHistoryFrom) params.set('from', globalHistoryFrom);
+      if (globalHistoryTo) params.set('to', globalHistoryTo);
+      if (importBatchYearFilter) params.set('year', importBatchYearFilter);
+      const res = await fetch(`/api/history?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        setGlobalHistoryRecords(data.records || []);
+        setImportBatches(data.batches || []);
+      }
+    } finally {
+      setGlobalHistoryLoading(false);
+    }
+  }, [globalHistoryQ, globalHistoryFrom, globalHistoryTo, importBatchYearFilter]);
+
+  useEffect(() => {
+    if (activeModule === 'historial') {
+      loadGlobalHistory();
+    }
+  }, [activeModule, loadGlobalHistory]);
+
+  function launchSiatTab(client: Client) {
+    window.postMessage(
+      {
+        type: 'RENGIFO_OPEN_SIAT',
+        payload: {
+          nit: client.nit,
+          email: client.correo,
+          password: client.contrasena_siat
+        }
+      },
+      window.location.origin
+    );
+
+    if (client.contrasena_siat) {
+      copyText(client.contrasena_siat, 'Clave SIAT');
+    }
+
+    const hasExt = document.documentElement.dataset.rengifoSiatExt === '1';
+    window.open('https://login.impuestos.gob.bo/', '_blank', 'noopener,noreferrer');
+    showToast(
+      hasExt
+        ? `Abriendo SIAT con autocompletado para ${client.razon_social}`
+        : `Abriendo SIAT (Clave SIAT copiada al portapapeles).`
+    );
+  }
+
+  function openSiatPortal(client: Client) {
+    const hasExt = document.documentElement.dataset.rengifoSiatExt === '1';
+    if (!hasExt) {
+      setPendingSiatClient(client);
+      if (client.contrasena_siat) {
+        copyText(client.contrasena_siat, 'Clave SIAT');
+      }
+      siatDialogRef.current?.showModal();
+      return;
+    }
+
+    setPendingSiatClient(null);
+    launchSiatTab(client);
+  }
 
   const copyText = useCallback(
     async (text: string, label: string) => {
@@ -621,7 +793,11 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
         return;
       }
       formDialogRef.current?.close();
-      showToast(editingId ? 'Cliente actualizado.' : 'Cliente registrado.');
+      showNotifyPopup(
+        'success',
+        editingId ? 'Cliente actualizado' : 'Cliente registrado',
+        `${formState.razon_social} (NIT ${formState.nit}) se guardó correctamente en el sistema.`
+      );
       await fetchClients();
     } catch {
       setFormError('Error de conexión con el servidor.');
@@ -630,20 +806,27 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
     }
   }
 
-  async function handleDeleteClient(client: Client) {
-    const ok = window.confirm(
-      `¿Eliminar definitivamente al cliente "${client.razon_social}" (NIT ${client.nit})?`
-    );
-    if (!ok) return;
-
-    const res = await fetch(`/api/clients/${client.id}`, { method: 'DELETE' });
-    if (res.ok) {
-      detailDialogRef.current?.close();
-      showToast('Cliente eliminado.');
-      await fetchClients();
-    } else {
-      showToast('No se pudo eliminar.');
-    }
+  function handleDeleteClient(client: Client) {
+    askConfirmPopup({
+      title: 'Eliminar cliente',
+      message: `¿Estás seguro de eliminar definitivamente a "${client.razon_social}" (NIT ${client.nit})? Se eliminará también su histórico de pagos y formularios.`,
+      confirmLabel: 'Sí, eliminar',
+      variant: 'danger',
+      onConfirm: async () => {
+        const res = await fetch(`/api/clients/${client.id}`, { method: 'DELETE' });
+        if (res.ok) {
+          detailDialogRef.current?.close();
+          showNotifyPopup(
+            'success',
+            'Cliente eliminado',
+            `Se eliminó a "${client.razon_social}" del directorio.`
+          );
+          await fetchClients();
+        } else {
+          showNotifyPopup('error', 'Error', 'No se pudo eliminar el cliente.');
+        }
+      }
+    });
   }
 
   function handleExportExcel() {
@@ -721,6 +904,7 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
     setImportDuplicateAction('skip');
     setImportYear(new Date().getFullYear());
     setImportMonth(new Date().getMonth() + 1);
+    setImportFechaManual(new Date().toISOString().slice(0, 10));
     setImportRecordHistory(true);
     setImportBatchYearFilter('');
     setImportError('');
@@ -811,13 +995,83 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
     }
   }
 
-  async function handleConfirmImport() {
+  function handleBulkAssignCategory(cat: string) {
+    if (!cat) return;
+    setImportParsedRows((prev) => prev.map((row) => ({ ...row, rubro: cat })));
+    setImportPreview((prev) =>
+      prev.map((item) => ({ ...item, data: { ...item.data, rubro: cat } }))
+    );
+    showToast(`Categoría "${cat}" aplicada a todas las filas.`);
+  }
+
+  function handleBulkAssignImportEstado(est: string) {
+    if (!est) return;
+    setImportParsedRows((prev) => prev.map((row) => ({ ...row, estado: est })));
+    setImportPreview((prev) =>
+      prev.map((item) => ({ ...item, data: { ...item.data, estado: est } }))
+    );
+    showToast(`Estado "${est}" aplicado a todas las filas.`);
+  }
+
+  const allVisibleSelected =
+    sortedClients.length > 0 && sortedClients.every((c) => selectedIds.includes(c.id));
+
+  function toggleSelectAllVisible() {
+    if (allVisibleSelected) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(sortedClients.map((c) => c.id));
+    }
+  }
+
+  function toggleSelectRow(id: number) {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
+
+  async function executeBulkAction(
+    action: 'delete' | 'update_estado' | 'update_rubro',
+    value?: string
+  ) {
+    if (selectedIds.length === 0) return;
+    const res = await fetch('/api/clients/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: selectedIds, action, value })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showNotifyPopup('error', 'Error', data.error || 'No se pudo aplicar la acción.');
+      return;
+    }
+    setSelectedIds([]);
+    showNotifyPopup(
+      'success',
+      'Acción completada',
+      `Se actualizaron/eliminaron ${data.affected} cliente(s) correctamente.`
+    );
+    await fetchClients();
+  }
+
+  function handleBulkDeleteSelected() {
+    if (selectedIds.length === 0) return;
+    askConfirmPopup({
+      title: `Eliminar ${selectedIds.length} cliente(s)`,
+      message: `¿Estás seguro de eliminar definitivamente los ${selectedIds.length} cliente(s) seleccionado(s) y todo su histórico? Esta acción no se puede deshacer.`,
+      confirmLabel: 'Sí, eliminar seleccionados',
+      variant: 'danger',
+      onConfirm: () => executeBulkAction('delete')
+    });
+  }
+
+  async function executeImport() {
     if (importParsedRows.length === 0) return;
     setImportLoading(true);
     setImportError('');
     const monthStr = String(importMonth).padStart(2, '0');
     const periodCode = `${importYear}-${monthStr}`;
-    const periodFecha = `${importYear}-${monthStr}-01`;
+    const periodFecha = importFechaManual || `${importYear}-${monthStr}-01`;
     const monthLabel = MONTH_NAMES[importMonth - 1] || '';
 
     try {
@@ -841,20 +1095,37 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
       const data = await res.json();
       if (!res.ok) {
         setImportError(data.error || 'Error al importar clientes.');
+        showNotifyPopup('error', 'Error de importación', data.error || 'No se pudo completar la importación.');
         return;
       }
       importDialogRef.current?.close();
-      showToast(
-        `Importación (${monthLabel} ${importYear}): ${data.inserted} nuevos${
-          data.updated ? `, ${data.updated} actualizados` : ''
-        }.`
+      showNotifyPopup(
+        'success',
+        'Importación completada',
+        `Gestión ${monthLabel} ${importYear} (fecha ${periodFecha}): ${data.inserted} cliente(s) nuevo(s), ${data.updated} actualizado(s) y ${importCounts.duplicate_db + importCounts.duplicate_file} repetido(s) discriminado(s).`
       );
       await fetchClients();
     } catch {
       setImportError('Error de conexión al importar.');
+      showNotifyPopup('error', 'Error de conexión', 'No se pudo conectar con el servidor durante la importación.');
     } finally {
       setImportLoading(false);
     }
+  }
+
+  function handleConfirmImport() {
+    const monthLabel = MONTH_NAMES[importMonth - 1] || '';
+    askConfirmPopup({
+      title: 'Confirmar importación de clientes',
+      message: `Se procesarán ${importCounts.new} cliente(s) nuevo(s)${
+        importDuplicateAction === 'update' && importCounts.duplicate_db > 0
+          ? ` y ${importCounts.duplicate_db} actualización(es)`
+          : ''
+      } para la gestión ${monthLabel} ${importYear} con fecha ${importFechaManual}. Los ${importCounts.duplicate_file} duplicado(s) en archivo e inválidos (${importCounts.invalid}) serán omitidos.`,
+      confirmLabel: 'Confirmar e importar',
+      variant: 'primary',
+      onConfirm: executeImport
+    });
   }
 
   const historyEstadoClass = (estado: string) => {
@@ -890,20 +1161,42 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
             </div>
           </div>
 
-          <div className="topbar-actions">
+          <nav className="module-nav" aria-label="Módulos del sistema">
             <button
               type="button"
-              className="btn btn-topbar-ghost"
-              onClick={() => setShowCharts((v) => !v)}
-              aria-pressed={showCharts}
+              className={`module-tab ${activeModule === 'control' ? 'is-active' : ''}`}
+              onClick={() => setActiveModule('control')}
             >
-              <BarChart3 size={16} aria-hidden="true" />
-              {showCharts ? 'Ocultar gráficos' : 'Ver gráficos'}
+              <LayoutDashboard size={16} aria-hidden="true" />
+              Centro de Control
             </button>
-            <button type="button" className="btn btn-primary" onClick={openCreateForm}>
-              <Plus size={17} aria-hidden="true" />
-              Nuevo cliente
+            <button
+              type="button"
+              className={`module-tab ${activeModule === 'clientes' ? 'is-active' : ''}`}
+              onClick={() => setActiveModule('clientes')}
+            >
+              <Users size={16} aria-hidden="true" />
+              Directorio de Clientes
             </button>
+            <button
+              type="button"
+              className={`module-tab ${activeModule === 'tokens' ? 'is-active' : ''}`}
+              onClick={() => setActiveModule('tokens')}
+            >
+              <ShieldCheck size={16} aria-hidden="true" />
+              Tokens y Firma
+            </button>
+            <button
+              type="button"
+              className={`module-tab ${activeModule === 'historial' ? 'is-active' : ''}`}
+              onClick={() => setActiveModule('historial')}
+            >
+              <History size={16} aria-hidden="true" />
+              Historial
+            </button>
+          </nav>
+
+          <div className="topbar-actions">
             <div className="user-pill">
               <span className="user-name">{user.full_name || user.username}</span>
               <button
@@ -921,97 +1214,174 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
       </header>
 
       <main className="main-content">
-        {/* KPIs rápidos */}
-        <section className="kpi-strip" aria-label="Resumen de clientes">
-          <button
-            type="button"
-            className={`kpi-card ${!filterEstado && !quickDdjjPending ? 'is-active' : ''}`}
-            onClick={() => {
-              setQuickDdjjPending(false);
-              setFilterEstado('');
-            }}
-          >
-            <span className="kpi-label">Total clientes</span>
-            <strong className="kpi-value">{stats.total}</strong>
-          </button>
+        {/* MÓDULO 1: CENTRO DE CONTROL */}
+        {activeModule === 'control' && (
+          <>
+            <div className="module-header-bar">
+              <div>
+                <h1 className="module-title">Centro de Control</h1>
+                <p className="module-subtitle">Resumen ejecutivo, indicadores fiscales y acceso rápido</p>
+              </div>
+              <div className="module-quick-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => siatDialogRef.current?.showModal()}
+                >
+                  <KeyRound size={16} aria-hidden="true" />
+                  Autocompletado SIAT
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setActiveModule('clientes')}
+                >
+                  <Users size={16} aria-hidden="true" />
+                  Ir al Directorio
+                </button>
+                <button type="button" className="btn btn-primary" onClick={openCreateForm}>
+                  <Plus size={16} aria-hidden="true" />
+                  Nuevo cliente
+                </button>
+              </div>
+            </div>
 
-          <button
-            type="button"
-            className={`kpi-card ${filterEstado === 'Activo' && !quickDdjjPending ? 'is-active' : ''}`}
-            onClick={() => {
-              setQuickDdjjPending(false);
-              setFilterEstado('Activo');
-            }}
-          >
-            <span className="kpi-label">Activos</span>
-            <strong className="kpi-value kpi-ok">{stats.activos}</strong>
-          </button>
+            {/* KPIs rápidos */}
+            <section className="kpi-strip" aria-label="Resumen de clientes">
+              <button
+                type="button"
+                className={`kpi-card ${!filterEstado && !quickDdjjPending ? 'is-active' : ''}`}
+                onClick={() => {
+                  setQuickDdjjPending(false);
+                  setFilterEstado('');
+                  setActiveModule('clientes');
+                }}
+              >
+                <span className="kpi-label">Total clientes</span>
+                <strong className="kpi-value">{stats.total}</strong>
+              </button>
 
-          <button
-            type="button"
-            className={`kpi-card ${filterEstado === 'Inactivo / Suspendido' ? 'is-active' : ''}`}
-            onClick={() => {
-              setQuickDdjjPending(false);
-              setFilterEstado('Inactivo / Suspendido');
-            }}
-          >
-            <span className="kpi-label">Suspendidos</span>
-            <strong className="kpi-value kpi-warn">{stats.inactivos}</strong>
-          </button>
+              <button
+                type="button"
+                className={`kpi-card ${filterEstado === 'Activo' && !quickDdjjPending ? 'is-active' : ''}`}
+                onClick={() => {
+                  setQuickDdjjPending(false);
+                  setFilterEstado('Activo');
+                  setActiveModule('clientes');
+                }}
+              >
+                <span className="kpi-label">Activos</span>
+                <strong className="kpi-value kpi-ok">{stats.activos}</strong>
+              </button>
 
-          <button
-            type="button"
-            className={`kpi-card ${filterEstado === 'Baja' ? 'is-active' : ''}`}
-            onClick={() => {
-              setQuickDdjjPending(false);
-              setFilterEstado('Baja');
-            }}
-          >
-            <span className="kpi-label">De baja</span>
-            <strong className="kpi-value kpi-danger">{stats.bajas}</strong>
-          </button>
+              <button
+                type="button"
+                className={`kpi-card ${filterEstado === 'Inactivo / Suspendido' ? 'is-active' : ''}`}
+                onClick={() => {
+                  setQuickDdjjPending(false);
+                  setFilterEstado('Inactivo / Suspendido');
+                  setActiveModule('clientes');
+                }}
+              >
+                <span className="kpi-label">Suspendidos</span>
+                <strong className="kpi-value kpi-warn">{stats.inactivos}</strong>
+              </button>
 
-          <button
-            type="button"
-            className={`kpi-card ${quickDdjjPending ? 'is-active' : ''}`}
-            onClick={() => {
-              setQuickDdjjPending(true);
-              setFilterEstado('Activo');
-            }}
-          >
-            <span className="kpi-label">DD.JJ. pendientes</span>
-            <strong className="kpi-value kpi-accent">{stats.ddjj_pendientes}</strong>
-          </button>
-        </section>
+              <button
+                type="button"
+                className={`kpi-card ${filterEstado === 'Baja' ? 'is-active' : ''}`}
+                onClick={() => {
+                  setQuickDdjjPending(false);
+                  setFilterEstado('Baja');
+                  setActiveModule('clientes');
+                }}
+              >
+                <span className="kpi-label">De baja</span>
+                <strong className="kpi-value kpi-danger">{stats.bajas}</strong>
+              </button>
 
-        {/* Resumen Financiero */}
-        <section className="finance-strip" aria-label="Totales financieros y fiscales">
-          <div className="finance-item">
-            <span className="finance-label">Honorarios Activos / Mes</span>
-            <strong className="finance-value finance-value-orange">
-              {formatBs(financialSummary.totalHonorariosActivos)}
-            </strong>
-          </div>
-          <div className="finance-item">
-            <span className="finance-label">Proyección Anual</span>
-            <strong className="finance-value">
-              {formatBs(financialSummary.proyeccionAnualHonorarios)}
-            </strong>
-          </div>
-          <div className="finance-item">
-            <span className="finance-label">Saldo IVA Acumulado</span>
-            <strong className="finance-value">{formatBs(financialSummary.totalSaldoIva)}</strong>
-          </div>
-          <div className="finance-item">
-            <span className="finance-label">Saldo IT Acumulado</span>
-            <strong className="finance-value">{formatBs(financialSummary.totalSaldoIt)}</strong>
-          </div>
-        </section>
+              <button
+                type="button"
+                className={`kpi-card ${quickDdjjPending ? 'is-active' : ''}`}
+                onClick={() => {
+                  setQuickDdjjPending(true);
+                  setFilterEstado('Activo');
+                  setActiveModule('clientes');
+                }}
+              >
+                <span className="kpi-label">DD.JJ. pendientes</span>
+                <strong className="kpi-value kpi-accent">{stats.ddjj_pendientes}</strong>
+              </button>
+            </section>
 
-        {/* Dashboard Visual (Gráficos) */}
-        {showCharts && (
-          <DashboardCharts clients={sortedClients} summary={financialSummary} />
+            {/* Resumen Financiero */}
+            <section className="finance-strip" aria-label="Totales financieros y fiscales">
+              <div className="finance-item">
+                <span className="finance-label">Honorarios Activos / Mes</span>
+                <strong className="finance-value finance-value-orange">
+                  {formatBs(financialSummary.totalHonorariosActivos)}
+                </strong>
+              </div>
+              <div className="finance-item">
+                <span className="finance-label">Proyección Anual</span>
+                <strong className="finance-value">
+                  {formatBs(financialSummary.proyeccionAnualHonorarios)}
+                </strong>
+              </div>
+              <div className="finance-item">
+                <span className="finance-label">Saldo IVA Acumulado</span>
+                <strong className="finance-value">{formatBs(financialSummary.totalSaldoIva)}</strong>
+              </div>
+              <div className="finance-item">
+                <span className="finance-label">Saldo IT Acumulado</span>
+                <strong className="finance-value">{formatBs(financialSummary.totalSaldoIt)}</strong>
+              </div>
+            </section>
+
+            {/* Dashboard Visual (Gráficos) */}
+            {showCharts && (
+              <DashboardCharts clients={sortedClients} summary={financialSummary} />
+            )}
+
+            {/* Inteligencia de Gestión, Vencimientos y Salud del Padrón */}
+            <DashboardInsights
+              clients={clients}
+              summary={financialSummary}
+              siatExtReady={siatExtReady}
+              onOpenClient={(client) => openDetail(client)}
+              onOpenSiat={(client) => openSiatPortal(client)}
+              onOpenSiatSetup={() => siatDialogRef.current?.showModal()}
+              onFilterRubro={(rubro) => {
+                setQuickDdjjPending(false);
+                setFilterEstado('');
+                setFilterRubro(rubro);
+                setActiveModule('clientes');
+              }}
+              onFilterDdjjPending={() => {
+                setQuickDdjjPending(true);
+                setFilterEstado('Activo');
+                setActiveModule('clientes');
+              }}
+              onGoDirectory={() => setActiveModule('clientes')}
+            />
+          </>
         )}
+
+        {/* MÓDULO 2: DIRECTORIO DE CLIENTES */}
+        {activeModule === 'clientes' && (
+          <>
+            <div className="module-header-bar">
+              <div>
+                <h1 className="module-title">Directorio de Clientes</h1>
+                <p className="module-subtitle">Búsqueda rápida, credenciales SIAT, edición e importación</p>
+              </div>
+              <div className="module-quick-actions">
+                <button type="button" className="btn btn-primary" onClick={openCreateForm}>
+                  <Plus size={17} aria-hidden="true" />
+                  Nuevo cliente
+                </button>
+              </div>
+            </div>
 
         {/* Búsqueda y filtros */}
         <section className="filter-panel" aria-label="Búsqueda y filtros">
@@ -1264,6 +1634,67 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
           </div>
         </section>
 
+        {/* Barra de acciones masivas cuando hay filas seleccionadas */}
+        {selectedIds.length > 0 && (
+          <section className="bulk-action-bar" aria-label="Acciones para seleccionados">
+            <div className="bulk-info">
+              <strong>{selectedIds.length}</strong> cliente(s) seleccionado(s)
+            </div>
+            <div className="bulk-controls">
+              <select
+                aria-label="Cambiar estado de seleccionados"
+                defaultValue=""
+                onChange={(e) => {
+                  const val = e.target.value;
+                  e.target.value = '';
+                  if (val) executeBulkAction('update_estado', val);
+                }}
+              >
+                <option value="">Cambiar estado a...</option>
+                <option value="Activo">Activo</option>
+                <option value="Inactivo / Suspendido">Inactivo / Suspendido</option>
+                <option value="Baja">Baja</option>
+              </select>
+
+              <select
+                aria-label="Cambiar categoría de seleccionados"
+                defaultValue=""
+                onChange={(e) => {
+                  const val = e.target.value;
+                  e.target.value = '';
+                  if (val) executeBulkAction('update_rubro', val);
+                }}
+              >
+                <option value="">Cambiar categoría a...</option>
+                <option value="profesional">Profesional</option>
+                <option value="industrial">Industrial</option>
+                <option value="alquiler">Alquiler</option>
+                <option value="empresa">Empresa</option>
+                <option value="unipersonal">Unipersonal</option>
+                <option value="otro">Otro</option>
+              </select>
+
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={handleBulkDeleteSelected}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+                Eliminar seleccionados
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setSelectedIds([])}
+              >
+                <X size={14} aria-hidden="true" />
+                Cancelar selección
+              </button>
+            </div>
+          </section>
+        )}
+
         {/* Tabla de vista previa rápida (datos clave) */}
         <section className="table-card">
           <div
@@ -1278,6 +1709,14 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
               </caption>
               <thead>
                 <tr>
+                  <th scope="col" className="chk-col">
+                    <input
+                      type="checkbox"
+                      aria-label="Seleccionar todos los clientes"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAllVisible}
+                    />
+                  </th>
                   <th
                     scope="col"
                     aria-sort={sortKey === 'razon_social' ? sortDir : undefined}
@@ -1313,6 +1752,7 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                       Estado <span className="sort-icon" aria-hidden="true" />
                     </button>
                   </th>
+                  <th scope="col">Token / Firma</th>
                   <th scope="col" className="actions-col">
                     Ficha
                   </th>
@@ -1325,8 +1765,25 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                   const showCorreo = Boolean(revealedSecrets[correoKey]);
                   const showSiat = Boolean(revealedSecrets[siatKey]);
 
+                  const isSelected = selectedIds.includes(c.id);
+
                   return (
-                    <tr key={c.id} onClick={() => openDetail(c)}>
+                    <tr
+                      key={c.id}
+                      className={isSelected ? 'is-row-selected' : ''}
+                      onClick={() => openDetail(c)}
+                    >
+                      <td
+                        className="chk-col"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          aria-label={`Seleccionar ${c.razon_social}`}
+                          checked={isSelected}
+                          onChange={() => toggleSelectRow(c.id)}
+                        />
+                      </td>
                       <th scope="row">
                         <div className="client-name-cell">
                           <span className="client-name-main">{c.razon_social}</span>
@@ -1422,17 +1879,55 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                           )}
                         </div>
                       </td>
+                      <td>
+                        {(() => {
+                          const hasToken = Boolean(c.token_id);
+                          const st = hasToken
+                            ? getTokenExpiryStatus(c.vigencia_token || c.vigencia_firma || '')
+                            : { label: 'Sin Token', tone: 'neutral' as const };
+                          const label = hasToken && st.tone === 'neutral' ? 'Con Token' : st.label;
+                          return (
+                            <button
+                              type="button"
+                              className={`token-tag-btn tone-${st.tone}`}
+                              title="Ir al módulo Tokens y Firma para este cliente"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTokenSearchQuery(c.razon_social);
+                                setActiveModule('tokens');
+                              }}
+                            >
+                              <ShieldCheck size={12} aria-hidden="true" />
+                              {label}
+                            </button>
+                          );
+                        })()}
+                      </td>
                       <td className="actions-col">
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openDetail(c);
-                          }}
-                        >
-                          Ver ficha
-                        </button>
+                        <div className="row-actions">
+                          <button
+                            type="button"
+                            className="btn btn-siat btn-sm"
+                            title="Ir a Impuestos Nacionales (SIAT)"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openSiatPortal(c);
+                            }}
+                          >
+                            <ExternalLink size={13} aria-hidden="true" />
+                            SIAT
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDetail(c);
+                            }}
+                          >
+                            Ver ficha
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1450,6 +1945,188 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
             </div>
           )}
         </section>
+          </>
+        )}
+
+        {/* MÓDULO: VIGENCIA DE TOKEN Y FIRMA DIGITAL */}
+        {activeModule === 'tokens' && (
+          <TokenModule
+            clients={clients}
+            initialSearch={tokenSearchQuery}
+            onClearInitialSearch={() => setTokenSearchQuery('')}
+            onOpenClientById={(clientId) => {
+              const found = clients.find((item) => item.id === clientId);
+              if (found) openDetail(found);
+            }}
+            onTokensChanged={() => fetchClients()}
+            showToast={showToast}
+            copyText={copyText}
+          />
+        )}
+
+        {/* MÓDULO 3: HISTORIAL GENERAL */}
+        {activeModule === 'historial' && (
+          <>
+            <div className="module-header-bar">
+              <div>
+                <h1 className="module-title">Historial</h1>
+                <p className="module-subtitle">Seguimiento cronológico de pagos, formularios e importaciones por gestión</p>
+              </div>
+              <div className="detail-tabs" style={{ padding: 0, borderBottom: 0, background: 'transparent' }}>
+                <button
+                  type="button"
+                  className={`detail-tab ${globalHistoryTab === 'pagos' ? 'is-active' : ''}`}
+                  onClick={() => setGlobalHistoryTab('pagos')}
+                >
+                  <Wallet size={14} aria-hidden="true" />
+                  Pagos y Formularios ({globalHistoryRecords.length})
+                </button>
+                <button
+                  type="button"
+                  className={`detail-tab ${globalHistoryTab === 'importaciones' ? 'is-active' : ''}`}
+                  onClick={() => setGlobalHistoryTab('importaciones')}
+                >
+                  <Upload size={14} aria-hidden="true" />
+                  Lotes Importados ({importBatches.length})
+                </button>
+              </div>
+            </div>
+
+            {globalHistoryTab === 'pagos' ? (
+              <section className="table-card" style={{ padding: '1rem' }}>
+                <div className="search-row" style={{ marginBottom: '1rem' }}>
+                  <div className="search-input-wrap">
+                    <Search size={17} className="search-icon" aria-hidden="true" />
+                    <input
+                      type="search"
+                      aria-label="Buscar en histórico"
+                      placeholder="Buscar por cliente, NIT o formulario..."
+                      value={globalHistoryQ}
+                      onChange={(e) => setGlobalHistoryQ(e.target.value)}
+                    />
+                  </div>
+                  <div className="time-range-inputs">
+                    <input
+                      type="date"
+                      aria-label="Histórico desde"
+                      value={globalHistoryFrom}
+                      onChange={(e) => setGlobalHistoryFrom(e.target.value)}
+                    />
+                    <span className="time-sep">—</span>
+                    <input
+                      type="date"
+                      aria-label="Histórico hasta"
+                      value={globalHistoryTo}
+                      onChange={(e) => setGlobalHistoryTo(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                {globalHistoryLoading ? (
+                  <p className="history-empty">Cargando historial...</p>
+                ) : globalHistoryRecords.length === 0 ? (
+                  <p className="history-empty">No hay movimientos registrados para este criterio.</p>
+                ) : (
+                  <div className="import-preview-scroll" style={{ maxHeight: '62vh' }}>
+                    <table className="import-preview-table">
+                      <thead>
+                        <tr>
+                          <th>Fecha</th>
+                          <th>Período</th>
+                          <th>Cliente</th>
+                          <th>NIT</th>
+                          <th>Tipo</th>
+                          <th>Estado</th>
+                          <th>Honorarios</th>
+                          <th>Detalle</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {globalHistoryRecords.map((rec) => (
+                          <tr key={rec.id}>
+                            <td className="mono-copy">{rec.fecha_registro}</td>
+                            <td><span className="badge badge-neutral">{rec.periodo || '—'}</span></td>
+                            <td style={{ fontWeight: 600 }}>{rec.razon_social}</td>
+                            <td className="mono-copy">{rec.nit}</td>
+                            <td>{rec.tipo_evento}</td>
+                            <td>
+                              <span className={`badge ${historyEstadoClass(rec.estado_pago)}`}>
+                                {rec.estado_pago}
+                              </span>
+                            </td>
+                            <td className="num-col">{formatBs(rec.monto_honorarios)}</td>
+                            <td>{rec.observaciones || rec.formularios || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            ) : (
+              <section className="table-card" style={{ padding: '1rem' }}>
+                <div className="history-toolbar" style={{ marginBottom: '0.85rem' }}>
+                  <div className="import-period-fields">
+                    <span className="time-label">
+                      <Calendar size={14} aria-hidden="true" /> Filtrar por gestión:
+                    </span>
+                    <select
+                      aria-label="Filtrar lotes por año"
+                      value={importBatchYearFilter}
+                      onChange={(e) => setImportBatchYearFilter(e.target.value)}
+                    >
+                      <option value="">Todos los años</option>
+                      {[2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027].map((yr) => (
+                        <option key={yr} value={String(yr)}>
+                          {yr}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {importBatches.length === 0 ? (
+                  <p className="history-empty">No hay lotes importados registrados.</p>
+                ) : (
+                  <div className="import-preview-scroll" style={{ maxHeight: '62vh' }}>
+                    <table className="import-preview-table">
+                      <thead>
+                        <tr>
+                          <th>Período</th>
+                          <th>Gestión</th>
+                          <th>Archivo</th>
+                          <th>Nuevos</th>
+                          <th>Actualizados</th>
+                          <th>Total filas</th>
+                          <th>Fecha de carga</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importBatches.map((b) => (
+                          <tr key={b.id}>
+                            <td>
+                              <span className="badge badge-orange">
+                                {b.mes ? `${b.mes} ${b.anio}` : b.periodo}
+                              </span>
+                            </td>
+                            <td>{b.anio}</td>
+                            <td>{b.archivo}</td>
+                            <td><span className="badge badge-ok">{b.nuevos}</span></td>
+                            <td><span className="badge badge-neutral">{b.actualizados}</span></td>
+                            <td>{b.total_filas}</td>
+                            <td className="mono-copy">
+                              {new Date(b.created_at).toLocaleDateString('es-BO')}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            )}
+          </>
+        )}
       </main>
 
       {/* Modal: Ficha Completa del Cliente */}
@@ -1481,6 +2158,14 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                 </div>
               </div>
               <div className="dialog-header-actions">
+                <button
+                  type="button"
+                  className="btn btn-siat btn-sm"
+                  onClick={() => openSiatPortal(selectedClient)}
+                >
+                  <ExternalLink size={14} aria-hidden="true" />
+                  Ir a SIAT
+                </button>
                 <button
                   type="button"
                   className="btn btn-secondary btn-sm"
@@ -1681,8 +2366,8 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                     <dd>{selectedClient.fecha_baja || '—'}</dd>
                   </div>
                   <div className="detail-row">
-                    <dt>Fecha de pago</dt>
-                    <dd>{selectedClient.fecha_pago || '—'}</dd>
+                    <dt>Día de pago</dt>
+                    <dd>{selectedClient.fecha_pago ? `Día ${selectedClient.fecha_pago} de cada mes` : '—'}</dd>
                   </div>
                   <div className="detail-row">
                     <dt>Mes de cierre</dt>
@@ -2022,13 +2707,10 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                   onChange={(e) => {
                     const newNit = e.target.value;
                     const autoPago = getFechaPagoFromNit(newNit);
-                    const shouldAuto =
-                      !formState.fecha_pago ||
-                      /^Día \d{1,2} de cada mes$/.test(formState.fecha_pago);
                     setFormState({
                       ...formState,
                       nit: newNit,
-                      fecha_pago: shouldAuto && autoPago ? autoPago : formState.fecha_pago
+                      fecha_pago: autoPago ?? formState.fecha_pago
                     });
                   }}
                 />
@@ -2232,16 +2914,23 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
             </div>
             <div className="form-grid-3">
               <div className="field">
-                <label htmlFor="cf-pago">Fecha de pago</label>
+                <label htmlFor="cf-pago">Día de pago (1–31)</label>
                 <input
-                  type="text"
+                  type="number"
                   id="cf-pago"
-                  placeholder="Ej. Día 15 de cada mes"
-                  value={formState.fecha_pago}
-                  onChange={(e) => setFormState({ ...formState, fecha_pago: e.target.value })}
+                  min={1}
+                  max={31}
+                  placeholder="13 al 22"
+                  value={formState.fecha_pago ?? ''}
+                  onChange={(e) =>
+                    setFormState({
+                      ...formState,
+                      fecha_pago: e.target.value === '' ? null : Number(e.target.value)
+                    })
+                  }
                 />
                 <span className="field-hint">
-                  Se autocompleta según último dígito del NIT (DS 25619).
+                  Autocompletado según último dígito del NIT (DS 25619).
                 </span>
               </div>
               <div className="field">
@@ -2397,7 +3086,7 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
       {/* Modal: Importar Excel (.xls / .xlsx) con Previsualización y Discriminación de Duplicados */}
       <dialog
         ref={importDialogRef}
-        className="dialog-panel dialog-xl"
+        className={`dialog-panel dialog-wide ${importExpanded ? 'dialog-fullscreen' : ''}`}
         {...({ closedby: 'any' } as Record<string, string>)}
         aria-labelledby="import-dialog-title"
         onClose={(e) => {
@@ -2411,14 +3100,29 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
               Soporta archivos .xls, .xlsx y .csv. Valida los datos y discrimina NITs repetidos antes de guardar.
             </p>
           </div>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={() => importDialogRef.current?.close()}
-            aria-label="Cerrar importador"
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
+          <div className="dialog-header-actions">
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setImportExpanded((v) => !v)}
+              title={importExpanded ? 'Tamaño normal' : 'Ampliar ventana'}
+            >
+              {importExpanded ? (
+                <Minimize2 size={14} aria-hidden="true" />
+              ) : (
+                <Maximize2 size={14} aria-hidden="true" />
+              )}
+              {importExpanded ? 'Reducir' : 'Ampliar'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => importDialogRef.current?.close()}
+              aria-label="Cerrar importador"
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
         <div className="detail-tabs" role="tablist" aria-label="Opciones de importación">
@@ -2466,11 +3170,11 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
               </span>
             </div>
 
-            {/* Apartado de tiempo / período de la importación */}
+            {/* Apartado de tiempo / gestión y fecha manual de la importación */}
             <div className="import-period-bar">
               <div className="import-period-fields">
                 <span className="time-label">
-                  <Calendar size={14} aria-hidden="true" /> Período del archivo:
+                  <Calendar size={14} aria-hidden="true" /> Gestión / Período:
                 </span>
                 <select
                   aria-label="Mes de la importación"
@@ -2483,17 +3187,25 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                     </option>
                   ))}
                 </select>
-                <select
-                  aria-label="Año de la importación"
+                <input
+                  type="number"
+                  aria-label="Gestión o año de la importación"
+                  min={2000}
+                  max={2100}
+                  className="import-year-input"
                   value={importYear}
-                  onChange={(e) => setImportYear(Number(e.target.value))}
-                >
-                  {[2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027, 2028].map((yr) => (
-                    <option key={yr} value={yr}>
-                      {yr}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(e) => setImportYear(Number(e.target.value) || new Date().getFullYear())}
+                />
+                <span className="time-label" style={{ marginInlineStart: '0.35rem' }}>
+                  Fecha:
+                </span>
+                <input
+                  type="date"
+                  aria-label="Fecha manual de importación"
+                  className="import-date-input"
+                  value={importFechaManual}
+                  onChange={(e) => setImportFechaManual(e.target.value)}
+                />
               </div>
 
               <label className="import-history-check">
@@ -2530,15 +3242,51 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                       Inválidos: {importCounts.invalid}
                     </span>
                   )}
+                  <span className="badge badge-neutral" title="Columnas azules excluidas">
+                    Omitidas: CI, Usuario, Contraseña
+                  </span>
                 </div>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  disabled={importLoading}
-                  onClick={handleRevalidateImport}
-                >
-                  Revalidar cambios
-                </button>
+                <div className="import-bulk-actions">
+                  <select
+                    aria-label="Asignar estado a todas las filas"
+                    className="import-bulk-select"
+                    defaultValue=""
+                    onChange={(e) => {
+                      handleBulkAssignImportEstado(e.target.value);
+                      e.target.value = '';
+                    }}
+                  >
+                    <option value="">Estado para todos...</option>
+                    <option value="Activo">Activo</option>
+                    <option value="Inactivo / Suspendido">Inactivo / Suspendido</option>
+                    <option value="Baja">Baja</option>
+                  </select>
+                  <select
+                    aria-label="Asignar categoría a todas las filas"
+                    className="import-bulk-select"
+                    defaultValue=""
+                    onChange={(e) => {
+                      handleBulkAssignCategory(e.target.value);
+                      e.target.value = '';
+                    }}
+                  >
+                    <option value="">Categoría para todos...</option>
+                    <option value="profesional">Profesional</option>
+                    <option value="industrial">Industrial</option>
+                    <option value="alquiler">Alquiler</option>
+                    <option value="empresa">Empresa</option>
+                    <option value="unipersonal">Unipersonal</option>
+                    <option value="otro">Otro</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    disabled={importLoading}
+                    onClick={handleRevalidateImport}
+                  >
+                    Revalidar cambios
+                  </button>
+                </div>
               </div>
 
               {importCounts.duplicate_db > 0 && (
@@ -2569,17 +3317,18 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                 <table className="import-preview-table">
                   <thead>
                     <tr>
-                      <th>Fila</th>
-                      <th>Estado</th>
+                      <th style={{ width: '36px' }}>#</th>
+                      <th style={{ width: '68px' }}>Valid.</th>
                       <th>Razón Social / Nombre</th>
-                      <th>NIT</th>
-                      <th>Categoría</th>
-                      <th>Correo</th>
-                      <th>Clave SIAT</th>
-                      <th>Clave Correo</th>
-                      <th>Pago</th>
-                      <th>Honorarios</th>
-                      <th></th>
+                      <th style={{ width: '100px' }}>NIT</th>
+                      <th style={{ width: '106px' }}>Categoría</th>
+                      <th style={{ width: '110px' }}>Estado</th>
+                      <th>Correo electrónico</th>
+                      <th style={{ width: '100px' }}>Clave SIAT</th>
+                      <th style={{ width: '100px' }}>Clave Correo</th>
+                      <th style={{ width: '60px' }}>Día</th>
+                      <th style={{ width: '74px' }}>Honor.</th>
+                      <th style={{ width: '34px' }}></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2634,11 +3383,12 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                           <select
                             className="import-cell-input"
                             aria-label={`Categoría fila ${item.rowNumber}`}
-                            value={String(item.data.rubro || 'otro')}
+                            value={String(item.data.rubro ?? '')}
                             onChange={(e) =>
                               handleEditImportField(item.rowNumber, 'rubro', e.target.value)
                             }
                           >
+                            <option value="">—</option>
                             <option value="profesional">Profesional</option>
                             <option value="industrial">Industrial</option>
                             <option value="alquiler">Alquiler</option>
@@ -2648,9 +3398,23 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                           </select>
                         </td>
                         <td>
+                          <select
+                            className="import-cell-input"
+                            aria-label={`Estado fila ${item.rowNumber}`}
+                            value={String(item.data.estado || 'Activo')}
+                            onChange={(e) =>
+                              handleEditImportField(item.rowNumber, 'estado', e.target.value)
+                            }
+                          >
+                            <option value="Activo">Activo</option>
+                            <option value="Inactivo / Suspendido">Suspendido</option>
+                            <option value="Baja">Baja</option>
+                          </select>
+                        </td>
+                        <td>
                           <input
                             type="email"
-                            className="import-cell-input import-cell-wide"
+                            className="import-cell-input"
                             aria-label={`Correo fila ${item.rowNumber}`}
                             value={String(item.data.correo || '')}
                             onChange={(e) =>
@@ -2690,12 +3454,18 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
                         </td>
                         <td>
                           <input
-                            type="text"
-                            className="import-cell-input"
-                            aria-label={`Fecha de pago fila ${item.rowNumber}`}
-                            value={String(item.data.fecha_pago || '')}
+                            type="number"
+                            min={1}
+                            max={31}
+                            className="import-cell-input import-cell-num"
+                            aria-label={`Día de pago fila ${item.rowNumber}`}
+                            value={item.data.fecha_pago === null || item.data.fecha_pago === undefined ? '' : Number(item.data.fecha_pago)}
                             onChange={(e) =>
-                              handleEditImportField(item.rowNumber, 'fecha_pago', e.target.value)
+                              handleEditImportField(
+                                item.rowNumber,
+                                'fecha_pago',
+                                e.target.value === '' ? '' : Number(e.target.value)
+                              )
                             }
                           />
                         </td>
@@ -2829,6 +3599,303 @@ export default function ClientDashboard({ user, onLoggedOut }: ClientDashboardPr
             </button>
           )}
         </footer>
+      </dialog>
+
+      {/* Guía rápida: Extensión de Autocompletado SIAT */}
+      <dialog
+        ref={siatDialogRef}
+        className="dialog-panel dialog-siat"
+        {...({ closedby: 'any' } as Record<string, string>)}
+        aria-labelledby="siat-dialog-title"
+        onClose={(e) => {
+          e.currentTarget.returnValue = '';
+        }}
+      >
+        <div className="dialog-header">
+          <div>
+            <h2 id="siat-dialog-title">Autocompletado en Impuestos Nacionales</h2>
+            <p className="dialog-subtitle">
+              Activa la extensión incluida en el proyecto para llenar NIT, correo y clave automáticamente en la nueva pestaña.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => siatDialogRef.current?.close()}
+            aria-label="Cerrar"
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="dialog-body" style={{ display: 'grid', gap: '0.9rem' }}>
+          <div className={`siat-ext-status-box ${siatExtReady ? 'is-ready' : 'is-pending'}`}>
+            <strong>
+              {siatExtReady
+                ? 'Estado: Extensión Rengifo SIAT detectada y activa ✓'
+                : 'Estado: Extensión aún no detectada en esta pestaña'}
+            </strong>
+            <span>
+              {siatExtReady
+                ? 'Al hacer clic en SIAT se completarán NIT, correo y contraseña automáticamente.'
+                : 'Descarga o carga la extensión en tu navegador y luego recarga esta página con Ctrl + F5.'}
+            </span>
+          </div>
+
+          <div className="siat-path-row">
+            <span style={{ fontSize: '0.84rem', fontWeight: 600 }}>
+              ¿En otra computadora? Descarga la extensión lista para descomprimir:
+            </span>
+            <a
+              href="/api/siat-extension"
+              download="rengifo-siat-extension.zip"
+              className="btn btn-primary btn-sm"
+            >
+              <Download size={14} aria-hidden="true" />
+              Descargar extensión (.zip)
+            </a>
+          </div>
+
+          <div className="pill-group" role="tablist" aria-label="Navegador">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={siatBrowserTab === 'chrome'}
+              className={`pill ${siatBrowserTab === 'chrome' ? 'is-active' : ''}`}
+              onClick={() => setSiatBrowserTab('chrome')}
+            >
+              Chrome / Edge
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={siatBrowserTab === 'brave'}
+              className={`pill ${siatBrowserTab === 'brave' ? 'is-active' : ''}`}
+              onClick={() => setSiatBrowserTab('brave')}
+            >
+              Brave / Opera / Vivaldi
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={siatBrowserTab === 'firefox'}
+              className={`pill ${siatBrowserTab === 'firefox' ? 'is-active' : ''}`}
+              onClick={() => setSiatBrowserTab('firefox')}
+            >
+              Firefox
+            </button>
+          </div>
+
+          {siatBrowserTab === 'chrome' && (
+            <ol style={{ margin: 0, paddingInlineStart: '1.25rem', display: 'grid', gap: '0.55rem', fontSize: '0.88rem' }}>
+              <li>
+                Descarga y descomprime el archivo <code>rengifo-siat-extension.zip</code> (o usa la carpeta local si estás en este servidor).
+              </li>
+              <li>
+                Abre <code>chrome://extensions</code> en Chrome o <code>edge://extensions</code> en Microsoft Edge.
+              </li>
+              <li>
+                Activa el interruptor <strong>Modo de desarrollador</strong> (arriba a la derecha).
+              </li>
+              <li>
+                Haz clic en <strong>Cargar descomprimida</strong> y selecciona la carpeta <code>rengifo-siat-extension</code> (o <code>chrome-extension</code>).
+              </li>
+              <li>
+                Vuelve aquí y presiona <strong>Ctrl + F5</strong>. ¡Listo!
+              </li>
+            </ol>
+          )}
+
+          {siatBrowserTab === 'brave' && (
+            <ol style={{ margin: 0, paddingInlineStart: '1.25rem', display: 'grid', gap: '0.55rem', fontSize: '0.88rem' }}>
+              <li>
+                Descarga y descomprime <code>rengifo-siat-extension.zip</code>.
+              </li>
+              <li>
+                Abre <code>brave://extensions</code> (o <code>opera://extensions</code> / <code>vivaldi://extensions</code>).
+              </li>
+              <li>
+                Activa el interruptor <strong>Modo de desarrollador</strong>.
+              </li>
+              <li>
+                Haz clic en <strong>Cargar descomprimida</strong> (<em>Load unpacked</em>) y selecciona la carpeta descomprimida.
+              </li>
+              <li>
+                Vuelve aquí y presiona <strong>Ctrl + F5</strong>. En Brave, si los escudos bloquean algo, asegúrate de permitir la extensión en <code>impuestos.gob.bo</code>.
+              </li>
+            </ol>
+          )}
+
+          {siatBrowserTab === 'firefox' && (
+            <ol style={{ margin: 0, paddingInlineStart: '1.25rem', display: 'grid', gap: '0.55rem', fontSize: '0.88rem' }}>
+              <li>
+                Descarga y descomprime <code>rengifo-siat-extension.zip</code> en una carpeta fija.
+              </li>
+              <li>
+                Abre <code>about:debugging#/runtime/this-firefox</code> en la barra de direcciones de Firefox.
+              </li>
+              <li>
+                Haz clic en <strong>Cargar complemento temporal...</strong> (<em>Load Temporary Add-on...</em>).
+              </li>
+              <li>
+                Selecciona el archivo <code>manifest.json</code> dentro de la carpeta descomprimida.
+              </li>
+              <li>
+                Vuelve aquí y presiona <strong>Ctrl + F5</strong>. (Nota: en Firefox estándar los complementos sin firma se recargan tras reiniciar el navegador).
+              </li>
+            </ol>
+          )}
+
+          <div className="siat-path-row">
+            <code>c:\Users\Rengifo\Desktop\Proyectos\sistema_de_centralizacion_de_clientes_RengifoLtda\chrome-extension</code>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() =>
+                copyText(
+                  'c:\\Users\\Rengifo\\Desktop\\Proyectos\\sistema_de_centralizacion_de_clientes_RengifoLtda\\chrome-extension',
+                  'Ruta de extensión'
+                )
+              }
+            >
+              <Copy size={14} aria-hidden="true" />
+              Copiar ruta local
+            </button>
+          </div>
+        </div>
+
+        <footer className="dialog-footer" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+          {pendingSiatClient ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                const target = pendingSiatClient;
+                setPendingSiatClient(null);
+                siatDialogRef.current?.close();
+                launchSiatTab(target);
+              }}
+            >
+              <ExternalLink size={15} aria-hidden="true" />
+              Abrir SIAT ahora (sin extensión)
+            </button>
+          ) : (
+            <span />
+          )}
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              const ready = document.documentElement.dataset.rengifoSiatExt === '1';
+              setSiatExtReady(ready);
+              if (ready && pendingSiatClient) {
+                const target = pendingSiatClient;
+                setPendingSiatClient(null);
+                siatDialogRef.current?.close();
+                launchSiatTab(target);
+              } else {
+                siatDialogRef.current?.close();
+              }
+            }}
+          >
+            {siatExtReady && pendingSiatClient ? 'Continuar al SIAT' : 'Entendido'}
+          </button>
+        </footer>
+      </dialog>
+
+      {/* Popup de Confirmación */}
+      <dialog
+        ref={confirmDialogRef}
+        className="dialog-panel dialog-popup"
+        aria-labelledby="confirm-popup-title"
+        onClose={(e) => {
+          e.currentTarget.returnValue = '';
+          setConfirmState(null);
+        }}
+      >
+        {confirmState && (
+          <div className="popup-body">
+            <div
+              className={`popup-icon ${
+                confirmState.variant === 'danger' ? 'is-danger' : 'is-warn'
+              }`}
+            >
+              <AlertTriangle size={26} aria-hidden="true" />
+            </div>
+            <h2 id="confirm-popup-title" className="popup-title">
+              {confirmState.title}
+            </h2>
+            <p className="popup-message">{confirmState.message}</p>
+            <div className="popup-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => confirmDialogRef.current?.close()}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className={`btn ${
+                  confirmState.variant === 'danger' ? 'btn-danger' : 'btn-primary'
+                }`}
+                onClick={() => {
+                  confirmDialogRef.current?.close();
+                  confirmState.onConfirm();
+                }}
+              >
+                {confirmState.confirmLabel}
+              </button>
+            </div>
+          </div>
+        )}
+      </dialog>
+
+      {/* Popup de Notificación / Verificación */}
+      <dialog
+        ref={notifyDialogRef}
+        className="dialog-panel dialog-popup"
+        {...({ closedby: 'any' } as Record<string, string>)}
+        aria-labelledby="notify-popup-title"
+        onClose={(e) => {
+          e.currentTarget.returnValue = '';
+          setNotifyState(null);
+        }}
+      >
+        {notifyState && (
+          <div className="popup-body">
+            <div
+              className={`popup-icon ${
+                notifyState.type === 'success'
+                  ? 'is-ok'
+                  : notifyState.type === 'warning'
+                  ? 'is-warn'
+                  : 'is-danger'
+              }`}
+            >
+              {notifyState.type === 'success' ? (
+                <CheckCircle2 size={28} aria-hidden="true" />
+              ) : notifyState.type === 'warning' ? (
+                <AlertTriangle size={28} aria-hidden="true" />
+              ) : (
+                <XCircle size={28} aria-hidden="true" />
+              )}
+            </div>
+            <h2 id="notify-popup-title" className="popup-title">
+              {notifyState.title}
+            </h2>
+            <p className="popup-message">{notifyState.message}</p>
+            <div className="popup-actions">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => notifyDialogRef.current?.close()}
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        )}
       </dialog>
 
       {toast && (

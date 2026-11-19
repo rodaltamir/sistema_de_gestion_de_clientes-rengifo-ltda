@@ -2065,3 +2065,715 @@ dialog::backdrop {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* ---------- Manual Import Date/Year & Popups ---------- */
+.import-year-input {
+  width: 86px;
+  min-height: 36px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.import-date-input {
+  width: auto;
+  min-height: 36px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.dialog-popup {
+  width: min(92vw, 430px);
+}
+
+.popup-body {
+  padding: 1.75rem 1.5rem 1.4rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.popup-icon {
+  width: 54px;
+  height: 54px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+}
+
+.popup-icon.is-ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.popup-icon.is-warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.popup-icon.is-danger {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.popup-title {
+  margin: 0;
+  font-size: 1.15rem;
+  color: var(--ink);
+}
+
+.popup-message {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--ink-secondary);
+  line-height: 1.5;
+}
+
+.popup-actions {
+  margin-top: 0.5rem;
+  display: flex;
+  justify-content: center;
+  gap: 0.65rem;
+  width: 100%;
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.btn-danger:hover {
+  background: #991b1b;
+}
+
+/* ---------- Wide & Fullscreen Import Window (No Horizontal Scroll) ---------- */
+.dialog-panel.dialog-wide {
+  width: min(97vw, 1420px);
+  max-height: 92dvh;
+}
+
+.import-bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.import-bulk-select {
+  width: auto;
+  min-height: 36px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.82rem;
+}
+
+.dialog-panel.dialog-fullscreen {
+  width: 99vw;
+  height: 96dvh;
+  max-height: 96dvh;
+}
+
+.dialog-fullscreen .import-preview-scroll {
+  max-height: 58dvh;
+}
+
+.dialog-wide .import-preview-scroll {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.dialog-wide .import-preview-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.dialog-wide .import-preview-table th,
+.dialog-wide .import-preview-table td {
+  padding: 0.42rem 0.45rem;
+}
+
+.dialog-wide .import-cell-input,
+.dialog-wide .import-cell-wide,
+.dialog-wide .import-cell-nit,
+.dialog-wide .import-cell-num {
+  min-width: 0;
+  width: 100%;
+}
+
+/* ---------- Main Table Select All & Bulk Action Bar ---------- */
+.chk-col {
+  width: 42px;
+  text-align: center !important;
+}
+
+.chk-col input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  min-height: auto;
+  accent-color: var(--orange);
+  cursor: pointer;
+}
+
+.is-row-selected {
+  background: var(--orange-soft) !important;
+}
+
+.is-row-selected th {
+  background: var(--orange-soft) !important;
+}
+
+.bulk-action-bar {
+  background: var(--ink);
+  color: #ffffff;
+  border-radius: var(--radius-md);
+  padding: 0.7rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  box-shadow: var(--shadow-md);
+}
+
+.bulk-info {
+  font-size: 0.9rem;
+}
+
+.bulk-info strong {
+  color: #ff9f38;
+}
+
+.bulk-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.bulk-controls select {
+  width: auto;
+  min-height: 36px;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.84rem;
+}
+
+.bulk-controls .btn-ghost {
+  color: #e5e7eb;
+}
+
+/* ---------- Topbar Module Navigation & Header Bars ---------- */
+.module-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.25rem;
+  border-radius: var(--radius-md);
+  flex-wrap: wrap;
+}
+
+.module-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 36px;
+  padding: 0.4rem 0.9rem;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #d1d5db;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.module-tab:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.module-tab.is-active {
+  background: var(--orange);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(232, 119, 0, 0.35);
+}
+
+.module-header-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.module-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+}
+
+.module-subtitle {
+  margin: 0.15rem 0 0;
+  font-size: 0.86rem;
+  color: var(--ink-muted);
+}
+
+.module-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* ---------- SIAT Button & Assistant Dialog ---------- */
+.btn-siat {
+  background: var(--ink);
+  color: #ffffff;
+  border-color: var(--ink);
+}
+
+.btn-siat:hover {
+  background: var(--orange);
+  border-color: var(--orange);
+  color: #ffffff;
+}
+
+.dialog-panel.dialog-siat {
+  width: min(94vw, 520px);
+}
+
+.siat-creds-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  background: var(--bg);
+  display: grid;
+  gap: 0.7rem;
+}
+
+
+/* ---------- Dashboard Insights (Centro de Control) ---------- */
+.insights-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.insight-card {
+  grid-column: span 6;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.insight-card-wide {
+  grid-column: span 12;
+}
+
+@media (max-width: 960px) {
+  .insight-card {
+    grid-column: span 12;
+  }
+}
+
+.insight-title-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.insight-icon {
+  color: var(--orange);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.insight-sub {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+}
+
+.due-days-strip {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+@media (max-width: 960px) {
+  .due-days-strip {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+.due-day-pill {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.35rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.due-day-pill:hover {
+  border-color: var(--orange);
+  background: #fff7ed;
+}
+
+.due-day-pill.is-today {
+  border-color: #0d9488;
+}
+
+.due-day-pill.is-selected {
+  border-color: var(--orange);
+  background: var(--orange);
+  color: #ffffff;
+}
+
+.due-day-num {
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.due-day-digit {
+  font-size: 0.67rem;
+  opacity: 0.78;
+}
+
+.due-day-count {
+  font-size: 0.95rem;
+  line-height: 1.1;
+}
+
+.insight-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.insight-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+}
+
+.insight-rank {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.insight-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.insight-row-title {
+  font-size: 0.84rem;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.insight-row-meta {
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+}
+
+.insight-amount {
+  font-size: 0.84rem;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.insight-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.btn-xs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.28rem 0.55rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.btn-xs:hover {
+  border-color: var(--ink);
+  background: var(--bg);
+}
+
+.btn-xs-siat {
+  background: var(--ink);
+  color: #ffffff;
+  border-color: var(--ink);
+}
+
+.btn-xs-siat:hover {
+  background: var(--orange);
+  border-color: var(--orange);
+  color: #ffffff;
+}
+
+.insight-empty {
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.84rem;
+  color: var(--ink-muted);
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+}
+
+.insight-more-link {
+  border: none;
+  background: transparent;
+  color: var(--orange);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: left;
+  padding: 0.25rem 0.1rem;
+  cursor: pointer;
+}
+
+.insight-more-link:hover {
+  text-decoration: underline;
+}
+
+.quality-progress-wrap {
+  margin-top: -0.2rem;
+}
+
+.alert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.alert-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  font-size: 0.83rem;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.alert-item:hover {
+  border-color: var(--orange);
+  background: #fffaf5;
+}
+
+.alert-label {
+  font-weight: 500;
+}
+
+.alert-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.badge-ok {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.badge-warn {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.badge-danger {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.ext-status-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ext-ok {
+  color: #047857;
+}
+
+.ext-warn {
+  color: #b45309;
+}
+
+.siat-ext-status-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+}
+
+.siat-ext-status-box.is-ready {
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  color: #065f46;
+}
+
+.siat-ext-status-box.is-pending {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+
+.siat-path-row {
+  margin-top: 0.45rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  flex-wrap: wrap;
+}
+
+.siat-path-row code {
+  font-size: 0.76rem;
+  word-break: break-all;
+}
+
+
+/* ---------- Tokens y Firma Digital ---------- */
+.token-tag-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.73rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+
+.token-tag-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(0.96);
+}
+
+.token-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.16rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  width: fit-content;
+  white-space: nowrap;
+}
+
+.tone-ok {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+
+.tone-warn {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fde68a;
+}
+
+.tone-danger {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+
+.tone-neutral {
+  background: #f3f4f6;
+  color: #4b5563;
+  border-color: #e5e7eb;
+}
+
+.token-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--orange);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.token-link-btn:hover {
+  text-decoration: underline;
+}
+
+.token-mod-badge {
+  display: inline-block;
+  padding: 0.18rem 0.5rem;
+  border-radius: 6px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 0.74rem;
+  font-weight: 700;
+  width: fit-content;
+}
+
+.token-cred-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.dialog-panel.dialog-import-wide {
+  width: min(96vw, 1140px);
+}

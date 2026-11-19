@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Rengifo Ltda · Autocompletado SIAT",
+  "version": "1.2.0",
+  "description": "Completa automáticamente NIT, correo electrónico y contraseña en Impuestos Nacionales (SIAT) desde el sistema de Rengifo Ltda.",
+  "permissions": ["storage"],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "siat-autofill@rengifoltda.local",
+      "strict_min_version": "109.0"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": ["bridge.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://*.impuestos.gob.bo/*"
+      ],
+      "js": ["autofill.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}

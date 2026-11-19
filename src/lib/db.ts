@@ -96,7 +96,7 @@ export async function ensureDatabaseReady(): Promise<void> {
           rubro_especifico TEXT NOT NULL DEFAULT '',
           ci_numero TEXT NOT NULL DEFAULT '',
           ci_extension TEXT NOT NULL DEFAULT '',
-          fecha_pago TEXT NOT NULL DEFAULT '',
+          fecha_pago INTEGER,
           mes_cierre TEXT NOT NULL DEFAULT 'Diciembre',
           honorarios_profesionales NUMERIC(14, 2) NOT NULL DEFAULT 0,
           declaraciones_juradas TEXT NOT NULL DEFAULT 'Al día',
@@ -159,6 +159,26 @@ export async function ensureDatabaseReady(): Promise<void> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_import_batches_anio ON import_batches(anio);
+
+        CREATE TABLE IF NOT EXISTS client_tokens (
+          id SERIAL PRIMARY KEY,
+          client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+          nombre_cliente TEXT NOT NULL,
+          modalidad_asignada TEXT NOT NULL DEFAULT '',
+          grupo TEXT NOT NULL DEFAULT '',
+          fecha_adecuacion TEXT NOT NULL DEFAULT '',
+          vigencia_token TEXT NOT NULL DEFAULT '',
+          vigencia_firma TEXT NOT NULL DEFAULT '',
+          correo_electronico TEXT NOT NULL DEFAULT '',
+          contrasena_outlook TEXT NOT NULL DEFAULT '',
+          contrasena_gmail TEXT NOT NULL DEFAULT '',
+          contrasena_digicert TEXT NOT NULL DEFAULT '',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_client_tokens_nombre_lower ON client_tokens (LOWER(btrim(nombre_cliente)));
+        CREATE INDEX IF NOT EXISTS idx_client_tokens_client_id ON client_tokens(client_id);
       `);
 
       // Ensure constraints and role column exist on upgraded databases
@@ -207,6 +227,21 @@ export async function ensureDatabaseReady(): Promise<void> {
           END IF;
           IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_clients_ci_num_valid') THEN
             ALTER TABLE clients ADD CONSTRAINT chk_clients_ci_num_valid CHECK (ci_numero = '' OR ci_numero ~ '^[0-9]{4,12}(-[A-Za-z0-9]{1,3})?$');
+          END IF;
+
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'clients' AND column_name = 'fecha_pago' AND data_type = 'text'
+          ) THEN
+            ALTER TABLE clients ALTER COLUMN fecha_pago DROP DEFAULT;
+            ALTER TABLE clients ALTER COLUMN fecha_pago DROP NOT NULL;
+            ALTER TABLE clients
+              ALTER COLUMN fecha_pago TYPE INTEGER
+              USING NULLIF(regexp_replace(fecha_pago, '[^0-9]', '', 'g'), '')::INTEGER;
+          END IF;
+
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_clients_fecha_pago_valid') THEN
+            ALTER TABLE clients ADD CONSTRAINT chk_clients_fecha_pago_valid CHECK (fecha_pago IS NULL OR (fecha_pago >= 1 AND fecha_pago <= 31));
           END IF;
           IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_clients_estado_valid') THEN
             ALTER TABLE clients ADD CONSTRAINT chk_clients_estado_valid CHECK (estado IN ('Activo', 'Inactivo / Suspendido', 'Baja'));
@@ -275,7 +310,7 @@ async function seedSampleClients(pool: Pool): Promise<void> {
       'Andina*2026#',
       'SiatAndina!88',
       'industrial',
-      'Día 15 de cada mes',
+      15,
       'Marzo',
       2800,
       'Al día',
@@ -300,7 +335,7 @@ async function seedSampleClients(pool: Pool): Promise<void> {
       'ValeriaMed23!',
       'VS_siat_4829',
       'profesional',
-      'Día 17 de cada mes',
+      17,
       'Diciembre',
       650,
       'Al día',
@@ -325,7 +360,7 @@ async function seedSampleClients(pool: Pool): Promise<void> {
       'PradoAdmin#91',
       'PradoSiat*2025',
       'alquiler',
-      'Día 22 de cada mes',
+      22,
       'Diciembre',
       1400,
       'Pendiente',
@@ -350,7 +385,7 @@ async function seedSampleClients(pool: Pool): Promise<void> {
       'Textil2020$',
       'AltSiat#2049',
       'industrial',
-      'Día 13 de cada mes',
+      13,
       'Marzo',
       1900,
       'Al día',
@@ -375,7 +410,7 @@ async function seedSampleClients(pool: Pool): Promise<void> {
       'Horizonte19*',
       'HN_siat_5519',
       'otro',
-      'Día 20 de cada mes',
+      20,
       'Diciembre',
       950,
       'Al día',
@@ -400,7 +435,7 @@ async function seedSampleClients(pool: Pool): Promise<void> {
       'Modular2024!',
       'ModSiat*619',
       'profesional',
-      'Día 14 de cada mes',
+      14,
       'Diciembre',
       1200,
       'Observado',

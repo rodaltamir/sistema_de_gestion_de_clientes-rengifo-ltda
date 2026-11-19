@@ -7,6 +7,9 @@ export const metadata: Metadata = {
     'Sistemas de gestión de clientes Rengifo Ltda: centralización, búsqueda rápida, cálculo fiscal y exportación.',
   icons: {
     icon: '/assets/logo-rengifo.png'
+  },
+  other: {
+    'rengifo-siat-app': '1'
   }
 };
 
